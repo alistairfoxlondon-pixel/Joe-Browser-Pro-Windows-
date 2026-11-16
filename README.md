@@ -24,7 +24,9 @@ outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
 | **Nothing downloads itself** | A build is fetched the first time something needs it. Opening the application never starts a download. |
 | **Any browser you have** | Chrome, Chromium, Brave, Edge and Firefox already on the PC are detected with their version and path and can be used as they are. |
 | **Proxies** | HTTP, HTTPS and SOCKS5 with authentication. Credentials are applied by a local relay, so a password never appears in a browser command line. |
-| **Fingerprint check** | A surface-by-surface comparison of what the profile claims against what a page will observe. |
+| **Fingerprint check** | A surface-by-surface comparison of what the profile claims against what a page will observe, plus one click to the six checker sites inside the profile's own session. |
+| **History per profile** | Every page a profile visits, recorded in its own file and invisible to every other profile. Clearable. |
+| **Proxy watch** | The exit address is checked on the profile's interval; a rotation, a proxy that stopped answering and a proxy that came back are all reported. A running profile can be re-pointed without closing its tabs. |
 | **Built to be read** | A real layout system, two themes, and a window that works at every width. |
 | **Private by default** | Profile data stays in `%APPDATA%\JoeBrowser`. Proxy passwords are encrypted with Windows DPAPI. No telemetry, no server, no cloud. |
 
@@ -127,6 +129,8 @@ src/main/          the Electron main process
   core/relay.ts         the local SOCKS5/HTTP relay that holds the proxy password
   core/catalog.ts       vendor release channels, install and removal
   core/store.ts         the profile store
+  core/extensions.ts    the three first-party MV3 extensions, written on every launch
+  core/history.ts       per-profile history, one JSONL file each
 src/preload/       the only bridge between the UI and the machine
 src/renderer/      the React UI
 src/shared/        the contract both sides agree on

@@ -62,15 +62,9 @@ function surface(name: string, claim: string, observed: string): LeakSurface {
   return { name, claim, observed, ok: claim === observed, note: '' };
 }
 
-/** The fifteen-point list the check dialog shows, kept exported for the UI's own labels. */
-export const CHECK_SITES = [
-  { name: 'iphey', url: 'https://iphey.com/' },
-  { name: 'pixelscan', url: 'https://pixelscan.net/' },
-  { name: 'browserscan', url: 'https://www.browserscan.net/' },
-  { name: 'ipfighter', url: 'https://ipfighter.com/' },
-  { name: 'whoer.net', url: 'https://whoer.net/' },
-  { name: 'whoer.com', url: 'https://whoer.com/' },
-];
+// The checker list lives in the shared contract so the window and the main process cannot
+// disagree about which sites exist.
+export { CHECK_SITES } from '../../shared/types';
 
 export function describeFingerprint(fp: FingerprintConfig): string {
   return `${fp.os} · ${fp.screenW}x${fp.screenH} · ${fp.timezone}`;

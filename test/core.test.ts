@@ -27,6 +27,10 @@ const { parseProxyLine, normalizeProxy, proxyEnabled, proxyLabel } = await impor
 const { buildFingerprintScript } = await import('../src/main/core/inject');
 const store = await import('../src/main/core/store');
 const { startRelay } = await import('../src/main/core/relay');
+const { ensureFirstPartyExtensions, extensionArgs, extensionDirectories } = await import(
+  '../src/main/core/extensions'
+);
+const history = await import('../src/main/core/history');
 
 test('the same seed always rebuilds the same machine', () => {
   const a = generateFingerprint({ seed: 424242 });
@@ -204,6 +208,87 @@ test('a proxy password is never stored in the clear', () => {
   assert.equal(raw.includes('hunter2'), false, 'the plaintext password reached the store file');
   assert.ok(created.proxy.passwordEnc.length > 0);
   assert.equal(store.proxyPasswordOf(created), 'hunter2');
+});
+
+test('the built-in extensions are written to disk with valid manifests', () => {
+  const installed = ensureFirstPartyExtensions();
+  assert.equal(installed.length, 3, 'expected three first-party extensions');
+
+  for (const extension of installed) {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(extension.dir, 'manifest.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    assert.equal(manifest['manifest_version'], 3, `${extension.id} is not MV3`);
+    assert.ok(fs.existsSync(path.join(extension.dir, 'content.js')), `${extension.id} has no script`);
+    assert.ok(
+      (manifest['content_scripts'] as unknown[]).length > 0,
+      `${extension.id} declares no content script`,
+    );
+  }
+
+  // Re-running must not duplicate or corrupt anything.
+  const again = ensureFirstPartyExtensions();
+  assert.deepEqual(again.map((e) => e.id), installed.map((e) => e.id));
+});
+
+test('the extension switches only carry folders that really are extensions', () => {
+  const base = store.createProfile({ name: 'Extension host' });
+  const good = path.join(scratch, 'extensions', 'joe-right-click');
+  const missing = path.join(scratch, 'extensions', 'does-not-exist');
+
+  const withBadPath = store.updateProfile(base.id, {
+    tools: { ...base.tools, customExtensions: `${good}\n${missing}\n` },
+  });
+
+  const directories = extensionDirectories(withBadPath, true);
+  assert.ok(directories.includes(good), 'a valid custom folder was dropped');
+  assert.ok(!directories.includes(missing), 'a folder with no manifest was passed to the browser');
+  assert.ok(directories.length >= 4, 'the three first-party extensions should also be present');
+
+  const args = extensionArgs(directories);
+  assert.equal(args.length, 2);
+  assert.ok(args[0]!.startsWith('--load-extension='));
+  assert.ok(args[1]!.startsWith('--disable-extensions-except='));
+
+  // The master switch turns everything off, including the built-in three.
+  assert.deepEqual(extensionDirectories(withBadPath, false), []);
+  assert.deepEqual(extensionArgs([]), []);
+});
+
+test('history is recorded per profile and cannot leak between them', () => {
+  const first = store.createProfile({ name: 'History A' });
+  const second = store.createProfile({ name: 'History B' });
+
+  history.clear(first.id);
+  history.clear(second.id);
+
+  history.record(first.id, 'https://example.com/one');
+  history.record(first.id, 'https://example.com/two');
+  history.record(second.id, 'https://other.example/private');
+
+  const forFirst = history.list(first.id);
+  const forSecond = history.list(second.id);
+
+  assert.equal(forFirst.length, 2);
+  assert.equal(forSecond.length, 1);
+  assert.ok(!forFirst.some((entry) => entry.url.includes('other.example')));
+
+  // Newest first.
+  assert.equal(forFirst[0]!.url, 'https://example.com/two');
+
+  // A repeat of the same address in a row is one visit, not two.
+  history.record(first.id, 'https://example.com/two');
+  assert.equal(history.list(first.id).length, 2);
+
+  // The fragment never leaves the browser, so it is not recorded either.
+  history.record(first.id, 'https://example.com/three#section');
+  assert.equal(history.list(first.id)[0]!.url, 'https://example.com/three');
+
+  const freed = history.clear(first.id);
+  assert.ok(freed > 0);
+  assert.equal(history.list(first.id).length, 0);
+  // Clearing one profile leaves the other untouched.
+  assert.equal(history.list(second.id).length, 1);
 });
 
 test('the relay listens on loopback and refuses to invent an upstream', async () => {

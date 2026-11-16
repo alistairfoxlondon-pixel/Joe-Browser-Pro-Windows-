@@ -2,13 +2,18 @@ name: Release
 
 # Builds JoeBrowserSetup.exe and JoeBrowser.exe on a real Windows runner and publishes them.
 #
-# The app is Electron, so the EXE has to be produced by a Windows toolchain: electron-builder
-# stamps the Windows version resources, signs where a certificate is configured, and packs the
-# NSIS installer. That cannot be done honestly from a Linux container, which is why this
-# workflow exists rather than a build script on the developer's machine.
+# The app is Electron, so the binaries have to come from a Windows-capable toolchain:
+# electron-builder unpacks the Windows Electron distribution, stamps the version resources and
+# packs the NSIS installer. That cannot be done from a Linux container, which is why this
+# workflow exists rather than a build on the developer's machine.
 #
-# A push to a branch builds and smoke-tests both binaries but publishes nothing, so a broken
-# build is visible before a tag is cut. Only a tag creates a release.
+# How it is triggered, and what each path does:
+#
+#   push to a branch      -> build, verify, keep the binaries as a workflow artifact, publish nothing
+#   push a tag (v*)       -> build, verify, publish a release with both binaries
+#   Run workflow (manual) -> build, verify, and publish a release under the tag you type in
+#
+# The manual path exists so a release needs one click rather than a local git tag.
 
 on:
   push:
@@ -17,22 +22,22 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (for example v2.0.0)'
-        required: true
-        default: 'v2.0.0'
+        description: 'Release tag to publish, for example v2.0.0. Leave empty to build only.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     name: Build and release
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
       - name: Check out the commit
@@ -42,11 +47,26 @@ jobs:
         id: ver
         shell: pwsh
         run: |
+          # package.json is the only place the version is allowed to live; the asset names, the
+          # release title and the tag are all derived from it, so they cannot disagree.
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($version -notmatch '^\d+\.\d+\.\d+') { throw "package.json has no usable version: $version" }
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
           Write-Host "Version $version"
+
+      - name: Check the requested tag against the version
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+        shell: pwsh
+        run: |
+          # A release titled v2.1.0 whose binaries report 2.0.0 is worse than no release: it is a
+          # download that lies about itself. Refuse rather than publish that.
+          $requested = '${{ github.event.inputs.tag }}'
+          $expected = '${{ steps.ver.outputs.tag }}'
+          if ($requested -ne $expected) {
+            throw "You asked for $requested but package.json says $expected. Bump the version first, or use $expected."
+          }
+          Write-Host "Tag $requested matches the packaged version."
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -60,15 +80,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit tests
+      - name: Unit and interface tests
         run: npm test
 
       - name: Build the bundles
         run: npm run build
 
       - name: Package the Windows binaries
-        # --publish never: this step only produces files. Publishing is the last step, so a
-        # release cannot exist for a build that failed afterwards.
+        # --publish never: this step only produces files. Publishing is a later step, so a
+        # release cannot exist for a build that failed after packaging.
         run: npx electron-builder --win --x64 --publish never
 
       - name: Verify the binaries
@@ -99,16 +119,20 @@ jobs:
           path: |
             release/JoeBrowserSetup.exe
             release/JoeBrowser.exe
-          retention-days: 14
+          retention-days: 30
 
       - name: Publish the release
-        # Only a tag publishes. The asset names are fixed, so the README's
-        # ../../releases/latest/download/JoeBrowserSetup.exe link never changes shape.
-        if: startsWith(github.ref, 'refs/tags/v')
+        # Three ways in, one result: a tag push, or a manual run that named a tag. A branch push
+        # stops before this step, so a broken build is visible before anything is published.
+        if: >-
+          startsWith(github.ref, 'refs/tags/v') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
         uses: softprops/action-gh-release@v2
         with:
+          # The asset names are fixed, so the README's
+          # ../../releases/latest/download/JoeBrowserSetup.exe link never changes shape.
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: Joe Browser ${{ steps.ver.outputs.version }}
-          tag_name: ${{ github.ref_name }}
           draft: false
           generate_release_notes: true
           body: |
@@ -121,7 +145,7 @@ jobs:
             nothing written outside your own profile.
 
             The binaries are not code-signed, so Windows SmartScreen may show
-            "Windows protected your PC" the first time. Choose **More info** then
+            "Windows protected your PC" the first time. Choose **More info**, then
             **Run anyway**.
           files: |
             release/JoeBrowserSetup.exe

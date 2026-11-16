@@ -158,6 +158,23 @@ export function ProxiesPage({
                     </span>
                   ) : null}
 
+                  {profile.running ? (
+                    <button
+                      className="btn btn-sm"
+                      title="Apply the edited proxy to the running session without closing its tabs"
+                      onClick={async () => {
+                        try {
+                          await bridge().applyProxyToSession(profile.id);
+                          toast('success', 'Proxy applied to the running session');
+                        } catch (error) {
+                          toast('warn', 'Could not swap the proxy', messageOf(error));
+                        }
+                      }}
+                    >
+                      Swap now
+                    </button>
+                  ) : null}
+
                   <button className="btn btn-sm" onClick={() => void check(profile)} disabled={busy}>
                     {busy ? <Spinner /> : null}
                     {busy ? 'Testing' : 'Test'}

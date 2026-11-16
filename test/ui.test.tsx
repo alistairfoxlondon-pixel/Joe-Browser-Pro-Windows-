@@ -60,6 +60,7 @@ const { BrowsersPage } = await import('../src/renderer/pages/BrowsersPage');
 const { ProxiesPage } = await import('../src/renderer/pages/ProxiesPage');
 const { SettingsPage } = await import('../src/renderer/pages/SettingsPage');
 const { ProfileEditor } = await import('../src/renderer/pages/ProfileEditor');
+const { HistoryModal } = await import('../src/renderer/pages/HistoryModal');
 const { mockBridge } = await import('../src/renderer/bridge');
 
 // The bridge the renderer expects, installed before any component looks for it.
@@ -181,6 +182,17 @@ test('every page renders on its own', async () => {
   );
   assert.ok(text().includes('Settings'));
   assert.deepEqual(problems, [], `SettingsPage: ${problems.join(' | ')}`);
+
+  reset();
+  await render(
+    React.createElement(HistoryModal, {
+      profile: profiles[0]!,
+      onClose: () => undefined,
+      toast: noop,
+    }),
+  );
+  assert.ok(text().includes('History'), 'the history dialog did not render');
+  assert.deepEqual(problems, [], `HistoryModal: ${problems.join(' | ')}`);
 });
 
 test('an empty store shows the empty state rather than a blank page', async () => {

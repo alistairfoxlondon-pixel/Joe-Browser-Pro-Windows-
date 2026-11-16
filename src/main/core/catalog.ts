@@ -226,6 +226,11 @@ function installedIndex(): Map<string, InstalledKernel> {
   return map;
 }
 
+/** The kernels already on disk, synchronously - used to spread profiles across builds. */
+export function installedKernels(): InstalledKernel[] {
+  return [...installedIndex().values()];
+}
+
 export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> {
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
   const fresh = Date.now() - cache.fetchedAt < CACHE_TTL_MS;
