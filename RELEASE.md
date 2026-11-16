@@ -90,15 +90,29 @@ Check in this order:
 
 ---
 
-## Alternative: let the App finish it instead
+## Why the automated path cannot finish this
 
-If you would rather not touch the file at all, grant the App the permission it is missing and
-the file can be moved by a normal push:
+Re-verified 2026-11-16. The App's permissions belong to the Arena integration and are **not**
+settable from your GitHub settings page, so there is nothing for you to grant there. The
+boundary that matters, measured from the build environment:
 
-**Settings → Applications → Installed GitHub Apps → (the app used here) → Configure →
-Permissions → Workflows: Read and write → Save.**
+| Host | Reachable | Consequence |
+|---|---|---|
+| `github.com`, `api.github.com` | yes | branches, PRs, releases, commits |
+| `codeload.github.com` | yes | source archives only |
+| `registry.npmjs.org` | yes | JS packages; no Electron binary ships in any of them |
+| `release-assets.githubusercontent.com` | **no** | the Windows Electron zip cannot be downloaded |
+| `objects.githubusercontent.com` | **no** | no binary objects |
+| `uploads.github.com` | **no** | a release can be *created* but no asset can be *attached* |
 
-Then say so, and the move plus the tagged release can be done without you.
+That closes both halves of the automated route at once: the `.github/workflows` write is
+refused by the App, and even with a release created by hand the runtime binaries could be
+neither fetched nor uploaded from here. The EXE has to be produced on a machine that can reach
+the Electron CDN and write the workflow — the `windows-latest` runner is that machine.
+
+A local cross-build is not a workaround: electron-builder must fetch the Windows Electron
+runtime from the same blocked host, and no npm package substitutes for it (`electron` ships a
+1.2 MB installer shim; `electron-installer-windows` ships NSIS templates, not a runtime).
 
 ---
 
