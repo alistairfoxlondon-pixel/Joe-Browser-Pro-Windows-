@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type {
   DesktopOs,
+  ExtensionReport,
   Profile,
   ProfileSummary,
   ProxyCheckResult,
@@ -40,6 +41,7 @@ export function ProfileEditor({ profile, onClose, onSaved, toast }: Props) {
   const [newEngine, setNewEngine] = useState('chrome');
   const [checking, setChecking] = useState(false);
   const [check, setCheck] = useState<ProxyCheckResult | null>(null);
+  const [extensions, setExtensions] = useState<ExtensionReport | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +56,8 @@ export function ProfileEditor({ profile, onClose, onSaved, toast }: Props) {
       try {
         const full = await bridge().getProfile(profile.id);
         if (!cancelled && full) setDraft(full);
+        const report = await bridge().listExtensions(profile.id);
+        if (!cancelled) setExtensions(report);
       } catch (error) {
         toast('error', 'Could not open that profile', messageOf(error));
       } finally {
@@ -570,6 +574,32 @@ export function ProfileEditor({ profile, onClose, onSaved, toast }: Props) {
               }
             />
           </Field>
+
+          <div>
+            <div className="section-label" style={{ marginBottom: 8 }}>
+              Built in, written by the app
+            </div>
+            <div className="list">
+              {(extensions?.firstParty ?? []).map((extension) => (
+                <div className="list-row" key={extension.id}>
+                  <div className="list-main">
+                    <div className="list-title">{extension.name}</div>
+                    <div className="list-sub">{extension.description}</div>
+                  </div>
+                  <span className={`chip ${extension.enabled ? 'ok' : ''}`}>
+                    {extension.enabled ? 'loaded' : 'off'}
+                  </span>
+                </div>
+              ))}
+              {extensions && extensions.firstParty.length === 0 ? (
+                <div className="list-row">
+                  <div className="list-main">
+                    <div className="list-sub">Extensions are switched off in Settings.</div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
 
           <Field
             label="Extra unpacked extensions"

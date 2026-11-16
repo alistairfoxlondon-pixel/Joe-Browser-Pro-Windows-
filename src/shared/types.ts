@@ -227,6 +227,28 @@ export interface AppInfo {
   runningCount: number;
 }
 
+export interface ExtensionReport {
+  masterEnabled: boolean;
+  firstParty: { id: string; name: string; description: string; enabled: boolean }[];
+  custom: { id: string; name: string; description: string; enabled: boolean }[];
+}
+
+export interface HistoryEntry {
+  profileId: string;
+  at: string;
+  url: string;
+  title: string;
+  how: string;
+}
+
+export interface StoreStats {
+  dataDir: string;
+  storeBytes: number;
+  profilesBytes: number;
+  kernelsBytes: number;
+  historyBytes: number;
+}
+
 export interface ToastPayload {
   kind: 'info' | 'success' | 'warn' | 'error';
   message: string;
@@ -260,6 +282,18 @@ export interface Bridge {
   importProfiles(): Promise<number>;
 
   runLeakCheck(id: string): Promise<LeakReport>;
+  /** Opens a checker site inside the profile, so it sees the fingerprint under test. */
+  openInProfile(id: string, url: string): Promise<void>;
+
+  listExtensions(id: string): Promise<ExtensionReport>;
+
+  listHistory(id: string, limit?: number): Promise<HistoryEntry[]>;
+  clearHistory(id: string): Promise<number>;
+
+  /** Re-point a running profile at its stored proxy. False when the session opened directly. */
+  applyProxyToSession(id: string): Promise<boolean>;
+
+  getStoreStats(): Promise<StoreStats>;
 
   getSettings(): Promise<AppSettings>;
   saveSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
@@ -278,6 +312,16 @@ export interface MainEvents {
   toast: ToastPayload;
   'app:changed': { profiles: number; running: number };
 }
+
+/** The fingerprint checkers, opened inside the profile's own session. */
+export const CHECK_SITES = [
+  { name: 'iphey', url: 'https://iphey.com/' },
+  { name: 'pixelscan', url: 'https://pixelscan.net/' },
+  { name: 'browserscan', url: 'https://www.browserscan.net/' },
+  { name: 'ipfighter', url: 'https://ipfighter.com/' },
+  { name: 'whoer.net', url: 'https://whoer.net/' },
+  { name: 'whoer.com', url: 'https://whoer.com/' },
+] as const;
 
 export const PROXY_TYPES: ProxyType[] = ['none', 'http', 'https', 'socks5'];
 export const DESKTOP_OSES: DesktopOs[] = ['Windows 11', 'Windows 10', 'macOS 15', 'macOS 14', 'Linux'];

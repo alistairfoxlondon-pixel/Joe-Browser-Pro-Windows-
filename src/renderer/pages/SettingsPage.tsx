@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import type { AppInfo, AppSettings } from '../../shared/types';
+import { useEffect, useState } from 'react';
+import type { AppInfo, AppSettings, StoreStats } from '../../shared/types';
 import { bridge } from '../bridge';
-import { Field, Spinner, Toggle } from '../components/UI';
+import { Field, Spinner, Toggle, bytes } from '../components/UI';
 import { messageOf } from '../util';
 
 export function SettingsPage({
@@ -17,6 +17,20 @@ export function SettingsPage({
 }) {
   const [busy, setBusy] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [stats, setStats] = useState<StoreStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void bridge()
+      .getStoreStats()
+      .then((value) => {
+        if (!cancelled) setStats(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (!settings) {
     return (
@@ -135,6 +149,18 @@ export function SettingsPage({
             >
               Open folder
             </button>
+          </div>
+
+          <div className="list-row">
+            <div className="list-main">
+              <div className="list-title">Space used</div>
+              <div className="list-sub">
+                {stats
+                  ? `${bytes(stats.profilesBytes)} of profile data · ${bytes(stats.kernelsBytes)} of browser builds · ${bytes(stats.historyBytes)} of history`
+                  : 'Measuring…'}
+              </div>
+            </div>
+            <span className="chip">{stats ? bytes(stats.storeBytes) : '—'}</span>
           </div>
 
           <div className="list-row">

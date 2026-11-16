@@ -342,6 +342,64 @@ export const mockBridge: Bridge = {
     return { profileId: id, score: 100, surfaces, checkedAt: new Date().toISOString() };
   },
 
+  async openInProfile() {
+    throw new Error('Preview only: opening a checker site needs the real browser.');
+  },
+
+  async listExtensions() {
+    return {
+      masterEnabled: true,
+      firstParty: [
+        {
+          id: 'joe-paste-as-human',
+          name: 'Joe Paste as Human',
+          description: 'Types clipboard text character by character with human timing.',
+          enabled: true,
+        },
+        {
+          id: 'joe-right-click',
+          name: 'Joe Right Click and Copy',
+          description: 'Restores the context menu, selection and copy on pages that block them.',
+          enabled: true,
+        },
+        {
+          id: 'joe-tracker-plus',
+          name: 'Joe Request Tracker',
+          description: 'Counts requests and third-party trackers and shows a badge on the page.',
+          enabled: true,
+        },
+      ],
+      custom: [],
+    };
+  },
+
+  async listHistory() {
+    const now = Date.now();
+    return [
+      { profileId: 'mock-0', at: new Date(now - 60000).toISOString(), url: 'https://example.com/', title: 'Example Domain', how: 'link' },
+      { profileId: 'mock-0', at: new Date(now - 120000).toISOString(), url: 'https://example.com/account', title: 'Account', how: 'link' },
+      { profileId: 'mock-0', at: new Date(now - 300000).toISOString(), url: 'https://example.com/login', title: 'Sign in', how: 'typed' },
+    ];
+  },
+
+  async clearHistory() {
+    return 2048;
+  },
+
+  async applyProxyToSession() {
+    return true;
+  },
+
+  async getStoreStats() {
+    return {
+      dataDir: '%APPDATA%\\JoeBrowser',
+      storeBytes: 1_920_000_000,
+      profilesBytes: 1_480_000_000,
+      kernelsBytes: 420_000_000,
+      historyBytes: 20_000,
+    };
+  },
+
   async getSettings() {
     return { ...settings };
   },

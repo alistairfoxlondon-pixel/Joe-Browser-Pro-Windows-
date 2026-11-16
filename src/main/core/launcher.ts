@@ -8,9 +8,12 @@ import type { Profile } from '../../shared/types';
 import { Paths } from './paths';
 import { CdpClient, delay } from './cdp';
 import { buildFingerprintScript } from './inject';
-import { openTunnel, proxyEnabled, upstreamOf } from './proxy';
+import { openTunnel, proxyEnabled, upstreamOf, type Upstream } from './proxy';
 import { startRelay, type RelayHandle } from './relay';
-import { proxyPasswordOf, findProfile } from './store';
+import { proxyPasswordOf, findProfile, getSettings } from './store';
+import { extensionArgs, extensionDirectories, installFirefoxExtensions } from './extensions';
+import { testProxy } from './proxy';
+import * as history from './history';
 import { resolveKernelExe, detectInstalledBrowsers } from './catalog';
 import { buildIdentity } from './ua';
 
@@ -42,6 +45,10 @@ export class BrowserSession extends EventEmitter {
   private injectScript = '';
   private stamped = new Set<string>();
   private closing = false;
+  private watchTimer: NodeJS.Timeout | null = null;
+  private lastExitIp = '';
+  private watchFails = 0;
+  private watchDown = false;
   private debugPort = 0;
   private dataDir: string;
   private readonly options: SessionOptions;
@@ -133,11 +140,19 @@ export class BrowserSession extends EventEmitter {
       this.info.debugPort = this.debugPort;
     }
 
+    // The extensions are written on every launch, so a folder the user deleted comes back and a
+    // store build that could not be fetched never leaves the tools missing.
+    const masterEnabled = getSettings().extensionsEnabled;
+    const extensions = isFirefox ? [] : extensionDirectories(profile, masterEnabled);
+
     const args = isFirefox
       ? this.firefoxArgs(profile, proxyArg, startUrl)
-      : this.chromiumArgs(profile, identity.userAgent, proxyArg, startUrl);
+      : this.chromiumArgs(profile, identity.userAgent, proxyArg, startUrl, extensions);
 
-    if (isFirefox) this.writeFirefoxPrefs(profile, identity.userAgent, proxyArg);
+    if (isFirefox) {
+      this.writeFirefoxPrefs(profile, identity.userAgent, proxyArg);
+      if (masterEnabled) installFirefoxExtensions(this.dataDir);
+    }
 
     this.injectScript = buildFingerprintScript({
       fingerprint: profile.fingerprint,
@@ -170,6 +185,8 @@ export class BrowserSession extends EventEmitter {
       void this.teardown();
     });
 
+    this.startProxyWatch(profile);
+
     if (!isFirefox) {
       // Attach in the background: the window is already usable, and a profile must not take
       // ten seconds to open because a checker is slow to be stamped.
@@ -184,6 +201,7 @@ export class BrowserSession extends EventEmitter {
     userAgent: string,
     proxyArg: string,
     startUrl?: string,
+    extensions: string[] = [],
   ): string[] {
     const fp = profile.fingerprint;
     const args = [
@@ -213,6 +231,8 @@ export class BrowserSession extends EventEmitter {
       args.push(`--proxy-server=${proxyArg}`);
       args.push('--proxy-bypass-list=<-loopback>');
     }
+
+    args.push(...extensionArgs(extensions));
 
     const url = startUrl || profile.startUrl || 'about:blank';
     args.push(url);
@@ -286,6 +306,16 @@ export class BrowserSession extends EventEmitter {
         filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'worker' }],
       });
 
+      // Every document request in this profile is one history entry. Network.requestWillBeSent
+      // fires before the request leaves, so a navigation that is later blocked still appears.
+      this.cdp.on('Network.requestWillBeSent', (params) => {
+        const type = String(params['type'] ?? '');
+        const request = params['request'] as { url?: string } | undefined;
+        if (type === 'Document' && request?.url) {
+          history.record(this.profileId, request.url);
+        }
+      });
+
       this.cdp.on('Target.attachedToTarget', (params, _sessionId) => {
         const sessionId = String(params['sessionId'] ?? '');
         const targetInfo = (params['targetInfo'] as { type?: string; targetId?: string } | undefined) ?? {};
@@ -332,6 +362,9 @@ export class BrowserSession extends EventEmitter {
     try {
       if (!isWorker) {
         await this.cdp.send('Page.enable', {}, sessionId).catch(() => undefined);
+        // Network is needed for the history capture; a target that refuses it simply has no
+        // history, which is honest and does not stop the stamping below.
+        await this.cdp.send('Network.enable', {}, sessionId).catch(() => undefined);
         await this.cdp.send('Runtime.enable', {}, sessionId).catch(() => undefined);
         // The identifier is deliberately not stored: a live re-apply would need it, but each
         // target is stamped exactly once (see `stamped`), so there is nothing to replace.
@@ -353,6 +386,97 @@ export class BrowserSession extends EventEmitter {
         .send('Runtime.runIfWaitingForDebugger', {}, sessionId)
         .catch(() => undefined);
     }
+  }
+
+  /**
+   * Watches the address the world sees this profile from.
+   *
+   * A rotating proxy is how a session is kept alive, and it is also the moment two sessions can
+   * be matched to one account. The app asks the proxy who it is on the profile's own interval and
+   * says so when the answer changes. A proxy that stops answering is reported only after two
+   * failures in a row: one missed request is a hiccup, and an alert that cries wolf is an alert
+   * nobody reads.
+   */
+  private startProxyWatch(profile: Profile): void {
+    if (!profile.tools.proxyWatch || !proxyEnabled(profile.proxy)) return;
+
+    const intervalMs = Math.min(600, Math.max(30, profile.tools.proxyWatchInterval)) * 1000;
+    const password = proxyPasswordOf(profile);
+    const config = profile.proxy;
+    let busy = false;
+
+    this.watchTimer = setInterval(() => {
+      if (busy || this.closing) return;
+      busy = true;
+      void testProxy(config, password, 15000)
+        .then((result) => {
+          if (this.closing) return;
+
+          if (!result.ok) {
+            this.watchFails++;
+            if (this.watchFails >= 2 && !this.watchDown) {
+              this.watchDown = true;
+              this.emit('notice', {
+                kind: 'warn' as const,
+                message: `The proxy for ${profile.name} stopped answering`,
+                detail: result.error,
+              });
+            }
+            return;
+          }
+
+          this.watchFails = 0;
+          if (this.watchDown) {
+            this.watchDown = false;
+            this.emit('notice', {
+              kind: 'success' as const,
+              message: `The proxy for ${profile.name} is answering again`,
+              detail: `${result.ip} · ${result.city || result.country}`,
+            });
+          }
+
+          if (!this.lastExitIp) {
+            this.lastExitIp = result.ip;
+          } else if (result.ip && result.ip !== this.lastExitIp) {
+            // A rotated exit is the one change worth interrupting the user for.
+            this.emit('notice', {
+              kind: 'info' as const,
+              message: `The exit address for ${profile.name} changed`,
+              detail: `${this.lastExitIp} → ${result.ip}`,
+            });
+            this.lastExitIp = result.ip;
+          }
+
+          this.info.exitIp = result.ip;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          busy = false;
+        });
+    }, intervalMs);
+
+    // A timer must never be the reason the app cannot quit.
+    this.watchTimer.unref?.();
+  }
+
+  /**
+   * Re-point a live session at a different upstream.
+   *
+   * Only a session that already goes through a relay can be re-pointed: the browser's own
+   * --proxy-server was fixed at spawn time, so a profile that opened directly cannot start using
+   * a proxy without being reopened. Returning false says that rather than pretending.
+   */
+  repointProxy(upstream: Upstream): boolean {
+    if (!this.relay) return false;
+    this.relay.setUpstream(upstream);
+    return true;
+  }
+
+  /** Open a page inside this profile, so a checker sees the fingerprint under test. */
+  async openUrl(url: string): Promise<void> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    if (!/^https:\/\//i.test(url)) throw new Error('Only https addresses can be opened.');
+    await this.cdp.send('Target.createTarget', { url });
   }
 
   async clearStorage(scope: 'cache' | 'cookies' | 'siteData'): Promise<boolean> {
@@ -404,6 +528,11 @@ export class BrowserSession extends EventEmitter {
   private async teardown(): Promise<void> {
     if (this.closing && this.info.state === 'stopped') return;
     this.closing = true;
+
+    if (this.watchTimer) {
+      clearInterval(this.watchTimer);
+      this.watchTimer = null;
+    }
 
     this.cdp?.close();
     this.cdp = null;
@@ -471,6 +600,9 @@ export class SessionManager {
     this.sessions.set(profile.id, session);
 
     session.on('changed', (info: SessionInfo) => this.events.emit('changed', info));
+    session.on('notice', (notice: { kind: string; message: string; detail: string }) =>
+      this.events.emit('notice', notice),
+    );
     session.on('closed', (profileId: string) => {
       this.sessions.delete(profileId);
       this.events.emit('closed', profileId);
@@ -498,6 +630,14 @@ export class SessionManager {
 
   sessionFor(profileId: string): BrowserSession | undefined {
     return this.sessions.get(profileId);
+  }
+
+  /** Swap a running profile's upstream without closing its tabs. */
+  async setProxy(profile: Profile): Promise<boolean> {
+    const session = this.sessions.get(profile.id);
+    if (!session) return false;
+    const password = proxyPasswordOf(profile);
+    return session.repointProxy(upstreamOf(profile.proxy, password));
   }
 }
 

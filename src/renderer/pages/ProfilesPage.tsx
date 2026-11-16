@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { LeakReport, ProfileSummary, SessionInfo } from '../../shared/types';
+import { CHECK_SITES, type LeakReport, type ProfileSummary, type SessionInfo } from '../../shared/types';
 import { bridge } from '../bridge';
 import { Empty, Modal, Spinner, ago, bytes } from '../components/UI';
 import { ProfileEditor } from './ProfileEditor';
+import { HistoryModal } from './HistoryModal';
 import { messageOf } from '../util';
 
 interface Props {
@@ -17,6 +18,7 @@ export function ProfilesPage({ profiles, sessions, toast, refresh }: Props) {
   const [group, setGroup] = useState<string>('all');
   const [editing, setEditing] = useState<ProfileSummary | 'new' | null>(null);
   const [report, setReport] = useState<LeakReport | null>(null);
+  const [historyFor, setHistoryFor] = useState<ProfileSummary | null>(null);
   const [busy, setBusy] = useState<string>('');
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
@@ -244,6 +246,14 @@ export function ProfilesPage({ profiles, sessions, toast, refresh }: Props) {
                             Check fingerprint
                           </MenuItem>
                           <MenuItem
+                            onClick={() => {
+                              setMenuFor(null);
+                              setHistoryFor(profile);
+                            }}
+                          >
+                            History
+                          </MenuItem>
+                          <MenuItem
                             onClick={() =>
                               act(profile, async () => {
                                 const freed = await bridge().clearProfileData(profile.id, 'cache');
@@ -346,7 +356,42 @@ export function ProfilesPage({ profiles, sessions, toast, refresh }: Props) {
               </div>
             ))}
           </div>
+
+          <div>
+            <div className="section-label" style={{ marginBottom: 8 }}>
+              Check it from inside this profile
+            </div>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+              Each of these opens in the profile's own session, so the site sees the fingerprint
+              under test rather than this window's browser.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {CHECK_SITES.map((site) => (
+                <button
+                  key={site.name}
+                  className="btn btn-sm"
+                  onClick={async () => {
+                    try {
+                      await bridge().openInProfile(report.profileId, site.url);
+                    } catch (error) {
+                      toast('error', `Could not open ${site.name}`, messageOf(error));
+                    }
+                  }}
+                >
+                  {site.name} ↗
+                </button>
+              ))}
+            </div>
+          </div>
         </Modal>
+      ) : null}
+
+      {historyFor ? (
+        <HistoryModal
+          profile={historyFor}
+          onClose={() => setHistoryFor(null)}
+          toast={toast}
+        />
       ) : null}
     </>
   );

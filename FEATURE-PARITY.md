@@ -56,7 +56,7 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 | Nothing downloads on launch | `Kernels.cs` | ported | Catalog read is cache-first; installs are explicit |
 | Chrome reaches back eight majors | `Kernels.cs` | ported | `MAJORS_TO_KEEP = 8` |
 | Brave and Edge downloadable builds | `Kernels.cs` | **partial** | Detected and usable; not downloadable — neither vendor publishes a portable archive. Honest gap rather than a fake link. |
-| Chromium diversity per profile (every profile a different real version) | `KernelDiversity.cs` | **planned** | |
+| Chromium diversity per profile (every profile a different real version) | `KernelDiversity.cs` | ported | `ipc.ts` → `leastUsedKernel`, assigns the least-used installed build on create |
 | Upgrade / repair flow for a known-bad kernel | `KernelsUi.cs` | **planned** | |
 
 ## 4. Proxies
@@ -69,8 +69,8 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 | Paste formats sellers use | `ProxyPage.cs` | ported | `core/proxy.ts` → `parseProxyLine`, tested |
 | Automatic timezone matching from the exit country | `ProxyTester.cs` | ported | `ProfileEditor.tsx` on a successful test |
 | Fallback to direct when a proxy dies | `ProxyRelay.cs`, `BrowserSession.cs` | ported | `launcher.ts` pre-flight, `Profile.proxy.fallbackDirect` |
-| Swap a running profile's proxy without closing tabs | `ProxyRelay.cs` | **partial** | `RelayHandle.setUpstream` exists; no UI trigger yet |
-| Proxy watch: rotation, lost, back, offline alerts | `BrowserSession.cs` | **planned** | Interval and switch are stored on the profile |
+| Swap a running profile's proxy without closing tabs | `ProxyRelay.cs` | ported | `RelayHandle.setUpstream` + `BrowserSession.repointProxy`, Proxies → Swap now |
+| Proxy watch: rotation, lost, back, offline alerts | `BrowserSession.cs` | ported | `launcher.ts` → `startProxyWatch`, two-failure rule, toasts |
 | Encrypted credential store (DPAPI) | `ProxyVault.cs` | ported | `core/secrets.ts` (DPAPI via `safeStorage`, AES-GCM fallback), tested |
 | Direct-connection comparison | `NetCheck.cs` | ported | `core/proxy.ts` → `testDirect`, Proxies page |
 
@@ -78,26 +78,26 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 
 | Feature | Original | Status | Here |
 |---|---|---|---|
-| Paste as human (Chromium, injected) | `FingerprintScript.cs`, `Extensions.cs` | ported | `core/inject.ts` with four speed profiles |
-| Right-click and selection restore | `FingerprintScript.cs` | ported | `core/inject.ts` |
+| Paste as human (Chromium, injected) | `FingerprintScript.cs`, `Extensions.cs` | ported | `core/inject.ts`, four speed profiles, plus a standalone MV3 extension |
+| Right-click and selection restore | `FingerprintScript.cs` | ported | `core/inject.ts`, plus a standalone MV3 extension |
 | Per-profile switches for both | `Models.cs`, `ToolsPage.cs` | ported | `ToolConfig`, Tools tab |
-| First-party MV3 extensions written locally | `ExtensionCatalog.cs` | **planned** | |
-| HTTP Tracker Plus | `ExtensionCatalog.cs` | **planned** | |
-| Custom extension folders | `Extensions.cs` | **partial** | Stored; not yet passed to the browser |
-| Firefox sideloaded WebExtension | `Extensions.cs` | **planned** | Firefox prefs are written; the extension itself is not |
-| Master switch for extensions | `ToolsPage.cs` | ported | `AppSettings.extensionsEnabled` (not yet enforced in `launcher.ts`) |
+| First-party MV3 extensions written locally | `ExtensionCatalog.cs` | ported | `core/extensions.ts` — three MV3 extensions written on every launch, never fetched |
+| HTTP Tracker Plus | `ExtensionCatalog.cs` | ported | `core/extensions.ts` → Joe Request Tracker (badge + request list, no permissions) |
+| Custom extension folders | `Extensions.cs` | ported | `extensionDirectories()` validates each folder before it reaches the command line |
+| Firefox sideloaded WebExtension | `Extensions.cs` | ported | `installFirefoxExtensions()` into the profile's `extensions/` folder |
+| Master switch for extensions | `ToolsPage.cs` | ported | Enforced in `launcher.ts`: off means no `--load-extension` at all |
 
 ## 6. Checks, history, dialogs
 
 | Feature | Original | Status | Here |
 |---|---|---|---|
 | Fingerprint check, surface by surface | `LeakTest.cs`, `LeakForm.cs` | ported | `core/leak.ts`, Profiles → Check fingerprint |
-| One click to the six checker sites in the profile's session | `LeakForm.cs` | **planned** | Site list exported from `core/leak.ts` |
-| Fifteen-point in-session probe | `FingerprintAudit.cs` | **planned** | |
-| Per-profile browsing history | `HistoryStore.cs`, `HistoryPage.cs` | **planned** | |
+| One click to the six checker sites in the profile's session | `LeakForm.cs` | ported | `CHECK_SITES` in the shared contract, opened through CDP `Target.createTarget` |
+| Fifteen-point in-session probe | `FingerprintAudit.cs` | **partial** | Fifteen surfaces are compared, but against the profile's own claim, not by reading the live page over CDP |
+| Per-profile browsing history | `HistoryStore.cs`, `HistoryPage.cs` | ported | `core/history.ts` (JSONL per profile, captured from CDP), History dialog |
 | Report a bug dialog | `Report.cs` | **planned** | |
 | QR code | `QrCode.cs` | **planned** | |
-| Disk space | `DiskSpace.cs` | **planned** | |
+| Disk space | `DiskSpace.cs` | ported | `ipc.ts` → `app:stats`, Settings → Space used |
 
 ## 7. Accounts and session
 
@@ -115,7 +115,7 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 | Toasts | `MainForm.cs` | ported | `components/UI.tsx` |
 | Profile cards with an avatar and chips | `ProfileCard.cs` | ported | `ProfilesPage.tsx` |
 | Menus, focus, keyboard dismiss | `MainForm.cs` | ported | `Modal`, Escape handling |
-| Six interface languages | `L10n.cs`, `LangPicker.cs` | **planned** | 1 508 lines of string tables |
+| Six interface languages | `L10n.cs`, `LangPicker.cs` | **not yet** | 1 508 lines of string tables; the interface is English-only for now |
 | Fonts bundled with the app (Inter, OpenSans, Telenor) | `src/fonts/*` | **partial** | The CSS asks for Inter and falls back to Segoe UI Variable |
 
 ## 9. Build and release

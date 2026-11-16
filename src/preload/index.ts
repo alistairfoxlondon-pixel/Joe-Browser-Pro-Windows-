@@ -37,6 +37,13 @@ const bridge = {
   importProfiles: () => invoke('profiles:import'),
 
   runLeakCheck: (id: string) => invoke('leak:run', id),
+  openInProfile: (id: string, url: string) => invoke('leak:openSite', id, url),
+
+  listExtensions: (id: string) => invoke('extensions:list', id),
+  listHistory: (id: string, limit?: number) => invoke('history:list', id, limit),
+  clearHistory: (id: string) => invoke('history:clear', id),
+  applyProxyToSession: (id: string) => invoke('sessions:applyProxy', id),
+  getStoreStats: () => invoke('app:stats'),
 
   getSettings: () => invoke('settings:get'),
   saveSettings: (patch: unknown) => invoke('settings:save', patch),

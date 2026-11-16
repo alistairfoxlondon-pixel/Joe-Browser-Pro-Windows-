@@ -6,6 +6,9 @@ import type {
   AppSettings,
   Bridge,
   DetectedBrowser,
+  ExtensionReport,
+  HistoryEntry,
+  StoreStats,
   InstalledKernel,
   KernelBuild,
   LeakReport,
@@ -29,7 +32,15 @@ import {
   summarise,
   updateProfile,
 } from './core/store';
-import { detectInstalledBrowsers, downloadKernel, listKernels, removeKernel } from './core/catalog';
+import {
+  detectInstalledBrowsers,
+  downloadKernel,
+  installedKernels,
+  listKernels,
+  removeKernel,
+} from './core/catalog';
+import { describeExtensions } from './core/extensions';
+import * as history from './core/history';
 import { testDirect, testProxy } from './core/proxy';
 import { Paths } from './core/paths';
 import { SessionManager } from './core/launcher';
@@ -54,6 +65,9 @@ export function registerIpc(context: IpcContext): void {
   sessions.events.on('changed', (info: SessionInfo) => {
     broadcast('session:changed', info);
     broadcast('app:changed', { profiles: countProfiles(), running: sessions.list().length });
+  });
+  sessions.events.on('notice', (notice: { kind: string; message: string; detail: string }) => {
+    broadcast('toast', notice);
   });
   sessions.events.on('closed', (profileId: string) => {
     broadcast('session:removed', { profileId });
@@ -95,7 +109,14 @@ export function registerIpc(context: IpcContext): void {
   handle<Profile | null>('profiles:get', (id: string) => findProfile(id));
 
   handle<Profile>('profiles:create', (input: Partial<Profile>) => {
-    const created = createProfile(input ?? {});
+    const requested = input ?? {};
+    // Kernel diversity: a new profile should not pile onto whichever build everyone else uses,
+    // because two profiles sharing one binary share its exact engine-level tell.
+    if (!requested.kernelId) {
+      const spread = leastUsedKernel(requested.engine ?? getSettings().defaultEngine);
+      if (spread) requested.kernelId = spread;
+    }
+    const created = createProfile(requested);
     broadcast('app:changed', { profiles: countProfiles(), running: sessions.list().length });
     return created;
   });
@@ -264,6 +285,55 @@ export function registerIpc(context: IpcContext): void {
     return imported;
   });
 
+  handle<ExtensionReport>('extensions:list', (id: string) => {
+    const profile = findProfile(id);
+    if (!profile) throw new Error('That profile no longer exists.');
+    return describeExtensions(profile, getSettings().extensionsEnabled);
+  });
+
+  handle<void>('leak:openSite', async (id: string, url: string) => {
+    const session = sessions.sessionFor(id);
+    if (!session) {
+      throw new Error('Open the profile first - a checker has to run inside it to see its fingerprint.');
+    }
+    await session.openUrl(url);
+  });
+
+  handle<HistoryEntry[]>('history:list', (id: string, limit?: number) => history.list(id, limit ?? 500));
+
+  handle<number>('history:clear', (id: string) => history.clear(id));
+
+  handle<boolean>('sessions:applyProxy', async (id: string) => {
+    const profile = findProfile(id);
+    if (!profile) throw new Error('That profile no longer exists.');
+    const applied = await sessions.setProxy(profile);
+    if (!applied) {
+      throw new Error(
+        'This profile opened on a direct connection, so it cannot start using a proxy without reopening.',
+      );
+    }
+    return true;
+  });
+
+  handle<StoreStats>('app:stats', () => {
+    const kernels = installedKernels().reduce((sum, kernel) => sum + folderSize(kernel.path), 0);
+    const profiles = allProfiles().reduce(
+      (sum, profile) => sum + folderSize(Paths.profileData(profile.id)),
+      0,
+    );
+    const historyBytes = allProfiles().reduce(
+      (sum, profile) => sum + history.sizeOf(profile.id),
+      0,
+    );
+    return {
+      dataDir: Paths.root,
+      storeBytes: folderSize(Paths.root),
+      profilesBytes: profiles,
+      kernelsBytes: kernels,
+      historyBytes,
+    };
+  });
+
   handle<LeakReport>('leak:run', (id: string) => {
     const profile = findProfile(id);
     if (!profile) throw new Error('That profile no longer exists.');
@@ -283,6 +353,31 @@ export function registerIpc(context: IpcContext): void {
     const { shell } = await import('electron');
     await shell.openPath(Paths.root);
   });
+}
+
+/**
+ * The installed kernel used by the fewest profiles, preferring the profile's own engine.
+ * Returns '' when nothing is installed, so the profile simply follows the system browser.
+ */
+function leastUsedKernel(engine: string): string {
+  const installed = installedKernels();
+  if (installed.length === 0) return '';
+
+  const usage = new Map<string, number>();
+  for (const profile of allProfiles()) {
+    if (profile.kernelId) usage.set(profile.kernelId, (usage.get(profile.kernelId) ?? 0) + 1);
+  }
+
+  const ranked = installed
+    .map((kernel) => ({
+      id: kernel.id,
+      // Same-engine builds come first; then the least used; then the newest.
+      sameEngine: kernel.engine === engine ? 0 : 1,
+      used: usage.get(kernel.id) ?? 0,
+    }))
+    .sort((a, b) => a.sameEngine - b.sameEngine || a.used - b.used);
+
+  return ranked[0]?.used === 0 ? ranked[0]!.id : '';
 }
 
 function folderSize(target: string): number {
