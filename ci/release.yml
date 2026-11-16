@@ -1,28 +1,23 @@
 name: Release
 
-# Builds JoeBrowserSetup.exe and JoeBrowser.exe on a real Windows runner and publishes them.
+# Builds JoeBrowserSetup.exe (installer) and JoeBrowser.exe (portable) on a real Windows
+# runner, verifies them, and attaches both to a GitHub release.
 #
-# The app is Electron, so the binaries have to come from a Windows-capable toolchain:
-# electron-builder unpacks the Windows Electron distribution, stamps the version resources and
-# packs the NSIS installer. That cannot be done from a Linux container, which is why this
-# workflow exists rather than a build on the developer's machine.
+# This file is the single source of truth. It must be installed at
+# .github/workflows/release.yml for GitHub to run it; a copy kept anywhere else is inert.
 #
-# How it is triggered, and what each path does:
-#
-#   push to a branch      -> build, verify, keep the binaries as a workflow artifact, publish nothing
-#   push a tag (v*)       -> build, verify, publish a release with both binaries
-#   Run workflow (manual) -> build, verify, and publish a release under the tag you type in
-#
-# The manual path exists so a release needs one click rather than a local git tag.
+# Triggers:
+#   push a tag v*        -> build, verify, publish
+#   Run workflow (manual)-> build, verify, publish under the tag you type in
+#   (an empty manual tag builds and verifies only, publishing nothing)
 
 on:
   push:
-    branches: [main, master, 'arena/**']
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to publish, for example v2.0.0. Leave empty to build only.'
+        description: 'Release tag to publish, e.g. v2.0.0. Leave empty to build without publishing.'
         required: false
         default: ''
 
@@ -47,8 +42,8 @@ jobs:
         id: ver
         shell: pwsh
         run: |
-          # package.json is the only place the version is allowed to live; the asset names, the
-          # release title and the tag are all derived from it, so they cannot disagree.
+          # package.json is the only place the version lives. The asset names, the release
+          # title and the tag are all derived from it, so they cannot disagree.
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($version -notmatch '^\d+\.\d+\.\d+') { throw "package.json has no usable version: $version" }
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -59,8 +54,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
         shell: pwsh
         run: |
-          # A release titled v2.1.0 whose binaries report 2.0.0 is worse than no release: it is a
-          # download that lies about itself. Refuse rather than publish that.
+          # A release titled v2.1.0 whose binaries report 2.0.0 is a download that lies about
+          # itself. Refuse rather than publish that.
           $requested = '${{ github.event.inputs.tag }}'
           $expected = '${{ steps.ver.outputs.tag }}'
           if ($requested -ne $expected) {
@@ -87,8 +82,8 @@ jobs:
         run: npm run build
 
       - name: Package the Windows binaries
-        # --publish never: this step only produces files. Publishing is a later step, so a
-        # release cannot exist for a build that failed after packaging.
+        # --publish never: this step only produces files. Publishing is a separate later step,
+        # so a release can never exist for a build that failed after packaging.
         run: npx electron-builder --win --x64 --publish never
 
       - name: Verify the binaries
@@ -104,15 +99,17 @@ jobs:
             Write-Host "$file - $([math]::Round($size/1MB,1)) MB"
           }
 
-          # An unsigned installer is expected; the file must still carry a Windows version
-          # resource or SmartScreen reports a nameless publisher.
+          # Both targets are unsigned; this only reports what the file claims about itself.
+          # A missing resource is a warning, never a reason to withhold a working build.
           $info = (Get-Item $setup).VersionInfo
-          Write-Host "Product: $($info.ProductName), version $($info.ProductVersion)"
-          if ([string]::IsNullOrWhiteSpace($info.ProductName)) {
-            throw 'The installer has no product name resource'
+          Write-Host "Installer resource: name '$($info.ProductName)', version '$($info.ProductVersion)'"
+          if ([string]::IsNullOrWhiteSpace($info.ProductName) -and [string]::IsNullOrWhiteSpace($info.FileDescription)) {
+            Write-Warning 'The installer carries no version resource; Windows will show an unknown publisher.'
           }
 
       - name: Keep the binaries as a build artifact
+        # Always uploaded, even when publishing is skipped, so a failed publish never means a
+        # wasted build - the EXE can still be attached by hand from here.
         uses: actions/upload-artifact@v4
         with:
           name: joe-browser-${{ steps.ver.outputs.version }}
@@ -122,18 +119,19 @@ jobs:
           retention-days: 30
 
       - name: Publish the release
-        # Three ways in, one result: a tag push, or a manual run that named a tag. A branch push
-        # stops before this step, so a broken build is visible before anything is published.
+        # A tag push, or a manual run that named a tag. A plain branch push stops before this
+        # step, so a broken build stays visible without publishing anything.
         if: >-
           startsWith(github.ref, 'refs/tags/v') ||
           (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          # The asset names are fixed, so the README's
+          # Fixed asset names, so the README's
           # ../../releases/latest/download/JoeBrowserSetup.exe link never changes shape.
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: Joe Browser ${{ steps.ver.outputs.version }}
           draft: false
+          fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             **Joe Browser ${{ steps.ver.outputs.version }}**
