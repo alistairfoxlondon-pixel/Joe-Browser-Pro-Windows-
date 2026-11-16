@@ -3,42 +3,33 @@
 `ci/release.yml` is the GitHub Actions workflow that builds `JoeBrowserSetup.exe` and
 `JoeBrowser.exe` on a Windows runner and attaches them to a release.
 
-It lives here rather than in `.github/workflows/` because the GitHub App that pushed this
-repository does not have the `workflows` permission, and GitHub refuses any push that creates or
-changes a file under `.github/workflows/` without it.
+## Why it is not in `.github/workflows/` already
 
-## To activate it — either way works
+The GitHub App that pushes this repository has `contents: write` but not the separate
+**`workflows`** permission. GitHub refuses any push that creates or changes a file under
+`.github/workflows/` without it:
 
-**A. Move it (one command, once the app has `workflows` permission):**
-
-```powershell
-mkdir .github\workflows
-git mv ci/release.yml .github/workflows/release.yml
-git commit -m "Activate the release pipeline"
-git push
+```
+refusing to allow a GitHub App to create or update workflow
+`.github/workflows/release.yml` without `workflows` permission
 ```
 
-**B. Add it through the web UI (no permission change needed):**
+The contents API answers the same way (`Resource not accessible by integration`). The file is
+therefore stored here, one move away from where Actions reads it.
 
-1. Open the repository on github.com.
-2. **Add file → Create new file**.
-3. Name it `.github/workflows/release.yml`.
-4. Paste the contents of `ci/release.yml`.
-5. Commit.
+## Activating it
 
-## Then
+Two options, both in [RELEASE.md](../RELEASE.md):
 
-Push a tag and the release appears with both binaries:
+- **Create the file through the web editor** — *Add file → Create new file*, filename
+  `.github/workflows/release.yml`, paste the contents of `ci/release.yml`, commit.
+  **Do not use "Upload files"**: that flow silently skips dot-directories, so `.github/` never
+  arrives and GitHub keeps saying "Workflow Not Found".
+- **Grant the App the `workflows` permission** and the file can be moved by a normal push.
 
-```powershell
-git tag v2.0.0
-git push origin v2.0.0
-```
+Once it is in place, push a tag or use **Run workflow** with a tag name; either publishes.
 
-`ci/release.yml` runs `npm run typecheck`, `npm test`, `npm run build`, then
-`electron-builder --win --x64`, checks that both binaries exist and are a plausible size, reads
-the installer's version resource, and only then publishes. A push to a branch builds and
-verifies without publishing, so a broken build is visible before a tag is cut.
+## What it does
 
-The asset names are fixed (`JoeBrowserSetup.exe`, `JoeBrowser.exe`) so that
-`releases/latest/download/JoeBrowserSetup.exe` in the README never changes shape.
+`typecheck → test → build → electron-builder → verify both binaries → publish on a tag`.
+A branch push builds and verifies but publishes nothing.
