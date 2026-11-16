@@ -3,8 +3,7 @@ import path from 'node:path';
 import { Paths } from './core/paths';
 import { registerIpc } from './ipc';
 import { SessionManager } from './core/launcher';
-import { flushStore } from './core/store';
-import { getSettings } from './core/store';
+import { flushStore, getSettings } from './core/store';
 
 /**
  * The main process.
@@ -14,7 +13,6 @@ import { getSettings } from './core/store';
  * through the preload bridge.
  */
 
-const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 
 const sessions = new SessionManager({
@@ -49,7 +47,8 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // The preload uses nothing but electron's own modules, so it runs sandboxed.
+      sandbox: true,
       spellcheck: false,
     },
   });

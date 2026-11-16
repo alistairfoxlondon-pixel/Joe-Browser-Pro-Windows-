@@ -60,10 +60,17 @@ export function registerIpc(context: IpcContext): void {
     broadcast('app:changed', { profiles: countProfiles(), running: sessions.list().length });
   });
 
-  const handle = <T>(channel: string, fn: (...args: never[]) => Promise<T> | T) => {
-    ipcMain.handle(channel, async (_event, ...args) => {
+  /**
+   * Registers one channel. Arguments arrive untyped from the renderer, so the handler signature
+   * declares what it expects and the call is narrowed once, here, rather than at every call site.
+   */
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  // `any` is correct here and only here: the argument list is decided by whichever channel is
+  // being registered, and every handler below names its own parameters precisely.
+  const handle = <T>(channel: string, fn: (...args: any[]) => Promise<T> | T) => {
+    ipcMain.handle(channel, async (_event, ...args: any[]) => {
       try {
-        return await fn(...(args as never[]));
+        return await fn(...args);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(message);
@@ -198,11 +205,16 @@ export function registerIpc(context: IpcContext): void {
 
   handle<string>('profiles:export', async () => {
     const window = BrowserWindow.getFocusedWindow();
-    const result = await dialog.showSaveDialog(window ?? undefined!, {
+    const options = {
       title: 'Export profiles',
       defaultPath: 'joe-browser-profiles.json',
       filters: [{ name: 'Joe Browser profiles', extensions: ['json'] }],
-    });
+    };
+    // The two-argument overload treats its first argument as the parent window; passing
+    // undefined to it is not the same as asking for a parent-less dialog.
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return '';
 
     // Passwords are exported as ciphertext: the file is a backup of this machine's store, not a
@@ -219,11 +231,14 @@ export function registerIpc(context: IpcContext): void {
 
   handle<number>('profiles:import', async () => {
     const window = BrowserWindow.getFocusedWindow();
-    const result = await dialog.showOpenDialog(window ?? undefined!, {
+    const options = {
       title: 'Import profiles',
-      properties: ['openFile'],
+      properties: ['openFile' as const],
       filters: [{ name: 'Joe Browser profiles', extensions: ['json'] }],
-    });
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return 0;
 
     const file = result.filePaths[0]!;
@@ -238,6 +253,9 @@ export function registerIpc(context: IpcContext): void {
         ...profile,
         // A fresh id on import: two exported copies of the same profile must both be usable.
         id: undefined as unknown as string,
+        // ...but the identity travels with it. Re-rolling on import would hand the user a
+        // different machine from the one their accounts were created on.
+        preserveFingerprint: true,
       });
       imported++;
     }

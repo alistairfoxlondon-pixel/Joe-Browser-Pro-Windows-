@@ -80,9 +80,32 @@ npm run build
 npx electron-builder --win --x64
 ```
 
-The output is `release\JoeBrowserSetup.exe` and `release\JoeBrowser.exe`. Pushing a tag such as
-`v2.0.0` runs `.github/workflows/release.yml`, which builds both binaries on a Windows runner,
-verifies them, and attaches them to the release.
+The output is `release\JoeBrowserSetup.exe` and `release\JoeBrowser.exe`.
+
+`scripts\release.ps1` runs all of that with the verification the CI job does, and publishes when
+asked:
+
+```powershell
+.\scripts\release.ps1                    # build and verify
+.\scripts\release.ps1 -Publish -Tag v2.0.0   # build, verify, tag, release
+```
+
+### What the checks cover
+
+| Check | What it proves |
+|---|---|
+| `npm run typecheck` | Both projects compile with `noUnusedLocals`, so no dead code is hiding a mistake |
+| `npm test` → core (11) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear |
+| `npm test` → ui (5) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
+| `npm run build` | The bundles produce; the main process carries no unresolved import |
+| `electron-builder` | Both binaries exist, are a plausible size, and carry a Windows version resource |
+
+### The release pipeline
+
+`ci/release.yml` is the GitHub Actions workflow that builds both binaries on a Windows runner and
+attaches them to a release on a tag. It lives in `ci/` rather than `.github/workflows/` because
+the GitHub App used to push this repository has no `workflows` permission — see `ci/README.md`
+for the one move that activates it.
 
 For design work without Electron:
 

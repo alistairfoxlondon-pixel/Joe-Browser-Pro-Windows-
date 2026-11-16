@@ -41,6 +41,3 @@ nsis:
 portable:
   artifactName: JoeBrowser.${ext}
   requestExecutionLevel: user
-
-# The app talks to no server, so no update feed is configured here.
-publish: null

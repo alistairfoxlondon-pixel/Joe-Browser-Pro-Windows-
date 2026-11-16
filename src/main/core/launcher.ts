@@ -39,7 +39,6 @@ export class BrowserSession extends EventEmitter {
   private child: ChildProcess | null = null;
   private relay: RelayHandle | null = null;
   private cdp: CdpClient | null = null;
-  private scriptId: string | null = null;
   private injectScript = '';
   private stamped = new Set<string>();
   private closing = false;
@@ -101,10 +100,12 @@ export class BrowserSession extends EventEmitter {
       // Prove the proxy answers before the browser is pointed at it. A silent dead proxy shows
       // up later as "every site is broken", which is the least useful failure mode there is.
       try {
-        const begun = Date.now();
-        await openTunnel(upstreamOf(profile.proxy, password), 'ip-api.com', 80, 8000);
+        // The probe must be closed again: an open tunnel left behind here is a socket that is
+        // never read and never freed, and a profile opened and closed a few hundred times leaks
+        // one handle each time.
+        const probe = await openTunnel(upstreamOf(profile.proxy, password), 'ip-api.com', 80, 8000);
+        probe.destroy();
         this.info.exitIp = '';
-        void begun;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.relay.setUpstream(upstreamOf(profile.proxy, password));
@@ -113,10 +114,12 @@ export class BrowserSession extends EventEmitter {
           message,
         );
         if (!profile.proxy.fallbackDirect) {
-          await this.teardown();
+          // Record the failure first: teardown sets the state to "stopped" and emits it, so a
+          // failure written afterwards is a state the window never sees.
           this.info.state = 'failed';
           this.info.lastError = message;
           this.emit('changed', this.info);
+          await this.teardown();
           throw new Error(message);
         }
         await this.relay.close();
@@ -330,12 +333,13 @@ export class BrowserSession extends EventEmitter {
       if (!isWorker) {
         await this.cdp.send('Page.enable', {}, sessionId).catch(() => undefined);
         await this.cdp.send('Runtime.enable', {}, sessionId).catch(() => undefined);
-        const added = await this.cdp.send<{ identifier: string }>(
+        // The identifier is deliberately not stored: a live re-apply would need it, but each
+        // target is stamped exactly once (see `stamped`), so there is nothing to replace.
+        await this.cdp.send(
           'Page.addScriptToEvaluateOnNewDocument',
           { source: this.injectScript, runImmediately: true },
           sessionId,
         );
-        this.scriptId = added.identifier;
       } else {
         // A worker has no Page domain; the same source still runs as a plain evaluation.
         await this.cdp.send('Runtime.enable', {}, sessionId).catch(() => undefined);

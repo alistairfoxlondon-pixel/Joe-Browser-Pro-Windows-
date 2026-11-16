@@ -113,12 +113,23 @@ textarea {
 }
 
 .sidebar {
+  position: relative;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 70%, transparent);
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding-top: var(--titlebar);
+}
+
+/* The band above the brand is the window's drag area on the left half. Without this it is dead
+   space that looks draggable and is not. */
+.sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--titlebar);
+  -webkit-app-region: drag;
 }
 
 .brand {
@@ -227,7 +238,8 @@ textarea {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding-top: var(--titlebar);
+  /* No top padding: .main renders the title bar itself, and the bar has to sit at y=0 to line
+     up with the native window buttons that Windows draws over the top-right corner. */
 }
 
 .main-head {
@@ -710,6 +722,21 @@ textarea.input {
 
 .list-row:last-child {
   border-bottom: 0;
+}
+
+/* A row with a fixed-width control (a path field, a select) will overflow a narrow window
+   rather than shrink. Below the width where the sidebar plus a form still fit side by side, the
+   row wraps instead. */
+@media (max-width: 900px) {
+  .list-row {
+    flex-wrap: wrap;
+  }
+}
+
+.list-row .input,
+.list-row .select {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .list-row:hover {

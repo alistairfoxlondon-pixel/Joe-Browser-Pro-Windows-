@@ -188,7 +188,6 @@ try {
 /* ---- clock and locale: these must agree with the proxy's country ---- */
 try {
   var realOffset = Date.prototype.getTimezoneOffset;
-  var zoneOffsets = {};
   Date.prototype.getTimezoneOffset = mask(function getTimezoneOffset(){
     try {
       var parts = new Intl.DateTimeFormat('en-US', { timeZone: C.timezone, timeZoneName: 'longOffset' })
@@ -215,9 +214,6 @@ try {
     } catch(e){}
     return options;
   });
-
-  var realLocale = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'format').get;
-  void realLocale;
 } catch(e){}
 
 /* ---- WebGL ---- */
@@ -265,33 +261,70 @@ try {
   if (win.WebGL2RenderingContext) patchGl(win.WebGL2RenderingContext.prototype);
 } catch(e){}
 
-/* ---- canvas: a stable per-profile perturbation, not per-call randomness ---- */
+/* ---- canvas ----
+   The perturbation is written into the canvas once, then every readout agrees with it.
+   Two earlier designs failed this: noise applied per call made getImageData return different
+   pixels on the second read, and noise applied only to getImageData left toDataURL reporting
+   the untouched bitmap - a checker that compares the two sees a tampered canvas either way.
+   The table is derived from the seed, so this profile answers identically on every visit. */
 try {
-  if (C.canvasNoise && win.CanvasRenderingContext2D) {
+  if (C.canvasNoise && win.CanvasRenderingContext2D && win.HTMLCanvasElement) {
+    var canvasNoiseTable = (function(){
+      var table = [];
+      var st = (C.seed >>> 0) || 1;
+      for (var i = 0; i < 512; i++) {
+        st = (st + 0x6D2B79F5) >>> 0;
+        var t2 = st;
+        t2 = Math.imul(t2 ^ (t2 >>> 15), t2 | 1);
+        t2 ^= t2 + Math.imul(t2 ^ (t2 >>> 7), t2 | 61);
+        table.push(((t2 ^ (t2 >>> 14)) >>> 0) & 3);
+      }
+      return table;
+    })();
+
     var ctxProto = win.CanvasRenderingContext2D.prototype;
     var realImageData = ctxProto.getImageData;
-    ctxProto.getImageData = mask(function getImageData(){
-      var data = realImageData.apply(this, arguments);
+    var realPutImageData = ctxProto.putImageData;
+    var noisedCanvases = new WeakSet();
+
+    function applyCanvasNoise(canvas) {
       try {
-        var pixels = data.data;
-        var limit = Math.min(pixels.length, 64);
-        for (var i = 0; i < limit; i += 4) {
-          var noise = rnd();
-          if (noise < 0.35) pixels[i] = pixels[i] ^ 1;
-          else if (noise < 0.7) pixels[i + 1] = pixels[i + 1] ^ 1;
-          else pixels[i + 2] = pixels[i + 2] ^ 1;
+        if (!canvas || noisedCanvases.has(canvas)) return;
+        noisedCanvases.add(canvas);
+        var context = canvas.getContext && canvas.getContext('2d');
+        if (!context) return;
+        var w = canvas.width, h = canvas.height;
+        if (!w || !h) return;
+        var image = realImageData.call(context, 0, 0, w, h);
+        var pixels = image.data;
+        for (var i = 0, n = 0; i < pixels.length; i += 4, n++) {
+          var pick = canvasNoiseTable[n & 511];
+          if (pick === 0) pixels[i] = pixels[i] ^ 1;
+          else if (pick === 1) pixels[i + 1] = pixels[i + 1] ^ 1;
+          else if (pick === 2) pixels[i + 2] = pixels[i + 2] ^ 1;
         }
-      } catch(e){}
-      return data;
+        realPutImageData.call(context, image, 0, 0);
+      } catch (e) {
+        /* a tainted canvas cannot be read back; leaving it alone is the honest outcome */
+      }
+    }
+
+    ctxProto.getImageData = mask(function getImageData(){
+      applyCanvasNoise(this.canvas);
+      return realImageData.apply(this, arguments);
     });
 
-    var realToDataUrl = win.HTMLCanvasElement.prototype.toDataURL;
-    win.HTMLCanvasElement.prototype.toDataURL = mask(function toDataURL(){
+    var canvasProto = win.HTMLCanvasElement.prototype;
+    var realToDataUrl = canvasProto.toDataURL;
+    canvasProto.toDataURL = mask(function toDataURL(){
+      applyCanvasNoise(this);
       return realToDataUrl.apply(this, arguments);
     });
-    var realToBlob = win.HTMLCanvasElement.prototype.toBlob;
+
+    var realToBlob = canvasProto.toBlob;
     if (realToBlob) {
-      win.HTMLCanvasElement.prototype.toBlob = mask(function toBlob(){
+      canvasProto.toBlob = mask(function toBlob(){
+        applyCanvasNoise(this);
         return realToBlob.apply(this, arguments);
       });
     }

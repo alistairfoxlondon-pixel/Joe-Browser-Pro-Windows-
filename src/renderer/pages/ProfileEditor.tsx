@@ -77,7 +77,6 @@ export function ProfileEditor({ profile, onClose, onSaved, toast }: Props) {
     );
   }
 
-  const name = draft?.name ?? '';
   const fp = draft?.fingerprint;
   const proxy = draft?.proxy;
   const tools = draft?.tools;

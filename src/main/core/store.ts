@@ -133,6 +133,8 @@ export function proxyPasswordOf(profile: Profile): string {
 
 export interface CreateProfileInput extends Partial<Profile> {
   copyFingerprintFrom?: string;
+  /** Keep the supplied identity verbatim - used when importing an exported store. */
+  preserveFingerprint?: boolean;
 }
 
 export function createProfile(input: CreateProfileInput): Profile {
@@ -142,7 +144,9 @@ export function createProfile(input: CreateProfileInput): Profile {
   const source = input.copyFingerprintFrom ? findProfile(input.copyFingerprintFrom) : null;
 
   let fingerprint;
-  if (source) {
+  if (input.preserveFingerprint && input.fingerprint) {
+    fingerprint = input.fingerprint;
+  } else if (source) {
     // A duplicate is meant to be the same machine with different storage, so the identity is
     // copied verbatim rather than rolled again.
     fingerprint = { ...source.fingerprint, seed: source.fingerprint.seed };

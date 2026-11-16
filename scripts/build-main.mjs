@@ -17,7 +17,10 @@ const shared = {
   sourcemap: false,
   minify: false,
   logLevel: 'info',
-  external: ['electron', 'ws'],
+  // Only electron is external. `ws` is bundled so the packaged app carries no node_modules
+  // it could fail to find inside the asar. Its optional native accelerators are left external
+  // because ws requires them inside a try/catch and works without them.
+  external: ['electron', 'bufferutil', 'utf-8-validate'],
 };
 
 rmSync('dist/main', { recursive: true, force: true });

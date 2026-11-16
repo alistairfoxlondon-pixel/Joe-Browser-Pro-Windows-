@@ -110,7 +110,7 @@ test('the injected script parses as JavaScript and carries the overrides', () =>
 
   // The originals live in a closure: the host's real graphics card must not be reachable by
   // walking own properties on window, which an earlier design leaked through a named key.
-  assert.doesNotMatch(script, quantity(/__jbReal/));
+  assert.doesNotMatch(script, /__jbReal/);
 });
 
 test('proxy lines are accepted in the shapes sellers actually paste', () => {
@@ -212,7 +212,3 @@ test('the relay listens on loopback and refuses to invent an upstream', async ()
   assert.ok(relay.port > 0);
   await relay.close();
 });
-
-function quantity(source: string): RegExp {
-  return new RegExp(source);
-}
