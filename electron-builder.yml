@@ -1,0 +1,43 @@
+appId: com.joebrowser.app
+productName: Joe Browser
+copyright: Copyright (c) 2026 Joe Goldberg. All rights reserved.
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+
+asar: true
+asarUnpack:
+  - resources/**
+
+# Windows: an NSIS installer plus a portable single EXE, both from one build.
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  requestedExecutionLevel: asInvoker
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Joe Browser
+  uninstallDisplayName: Joe Browser ${version}
+  # Exactly the two names the README links to, so the download URL never changes shape.
+  artifactName: JoeBrowserSetup.${ext}
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: JoeBrowser.${ext}
+  requestExecutionLevel: user
