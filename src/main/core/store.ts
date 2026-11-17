@@ -238,7 +238,7 @@ export function draftProfile(input: CreateProfileInput): Profile {
   let kernelId = input.kernelId ?? '';
   if (!kernelId && !source && !input.preserveFingerprint) {
     const preferred = getSettings().defaultKernelId;
-    const installed = installedKernels();
+    const installed = installedKernels().filter((kernel) => kernel.engine === engineFor(input));
     kernelId =
       preferred && installed.some((kernel) => kernel.id === preferred)
         ? preferred
@@ -248,6 +248,7 @@ export function draftProfile(input: CreateProfileInput): Profile {
 
   const profile = sanitizeProfile({
     ...(input as Profile),
+    engine: engineFor(input),
     kernelId,
     id: crypto.randomUUID(),
     name,
@@ -393,7 +394,7 @@ export function removeProfileData(id: string): void {
  */
 export function duplicateProfile(id: string): Profile {
   const source = findProfileOrThrow(id);
-  const assignment = assignDifferentKernel(installedKernels(), source, allProfiles());
+  const assignment = assignDifferentKernel(installedKernels().filter((kernel) => kernel.engine === source.engine), source, allProfiles());
   return createProfile({
     ...source,
     name: source.name,

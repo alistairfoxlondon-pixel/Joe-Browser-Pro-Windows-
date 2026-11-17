@@ -12,7 +12,7 @@ import { readJson, writeJson } from './atomic';
  * The browser kernel catalog.
  *
  * Joe Browser does not ship a browser; it manages real published builds. The list comes from
- * the vendors' own metadata (Chrome for Testing for Chromium and Chrome, Mozilla product
+ * the vendors' own metadata (Chrome for Testing and Mozilla product
  * details for Firefox) and is cached on disk, so the Browsers page opens instantly and a
  * machine that is briefly offline still shows what it saw last.
  *
@@ -89,7 +89,7 @@ function channelOf(version: string, channels: Record<string, string>): string {
   for (const [name, value] of Object.entries(channels)) {
     if (value === version) return name;
   }
-  return 'stable';
+  return 'known-good';
 }
 
 async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
@@ -121,16 +121,16 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
       }
     }
   } catch {
-    /* the known-good list below still gives the stable history */
+    /* known-good versions below remain available without channel claims */
   }
 
   const known = await httpsJson<CftShape>(CFT_KNOWN_GOOD);
-  const stable = (known.versions ?? []).filter((entry) => entry.downloads?.chrome || entry.downloads?.chromium);
+  const knownGood = (known.versions ?? []).filter((entry) => entry.downloads?.chrome || entry.downloads?.chromium);
 
   // Keep the newest build of each major, newest first, so the page is eight rows rather than
   // several hundred point releases.
   const byMajor = new Map<string, CftVersionEntry>();
-  for (const entry of stable) {
+  for (const entry of knownGood) {
     const major = entry.version.split('.')[0] ?? '';
     const current = byMajor.get(major);
     if (!current || compareVersions(entry.version, current.version) > 0) {
@@ -167,6 +167,9 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
 }
 
 async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
+  // Mozilla's stable Windows releases are installers, not ZIP archives; macOS releases
+  // are DMGs. Neither format is supported by our extraction pipeline.
+  if (process.platform !== 'linux') return [];
   const suffix = platformSuffix();
   const details = await httpsJson<Record<string, string>>(MOZILLA_VERSIONS);
   const versions: { channel: string; version: string }[] = [];
@@ -174,18 +177,14 @@ async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
   for (const [key, channel] of [
     ['LATEST_FIREFOX_VERSION', 'stable'],
     ['FIREFOX_ESR', 'esr'],
-    ['LATEST_FIREFOX_DEVEL_VERSION', 'dev'],
   ] as const) {
     const version = details[key];
     if (version && !version.includes('b') && !version.includes('a')) {
       versions.push({ channel, version });
-    } else if (version) {
-      versions.push({ channel, version: version.replace(/[ab]\d+$/, '') });
     }
   }
 
   return versions.map(({ channel, version }) => {
-    const folder = process.platform === 'win32' ? 'win64' : process.platform === 'darwin' ? 'mac' : 'linux-x86_64';
     return {
       id: buildId('firefox', version, channel),
       engine: 'firefox',
@@ -193,8 +192,7 @@ async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
       version,
       os: suffix,
       downloadUrl:
-        `https://archive.mozilla.org/pub/firefox/releases/${version}/${folder}/en-US/` +
-        (process.platform === 'win32' ? `firefox-${version}.zip` : `firefox-${version}.tar.bz2`),
+        `https://archive.mozilla.org/pub/firefox/releases/${version}/linux-x86_64/en-US/firefox-${version}.tar.bz2`,
       installed: false,
       path: '',
       sizeBytes: 0,
@@ -246,19 +244,25 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
   const fresh = Date.now() - cache.fetchedAt < CACHE_TTL_MS;
 
-  let builds = cache.builds;
+  // Discard legacy entries with a fabricated archive URL, including old cached results.
+  let builds = cache.builds.filter((build) =>
+    build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev'),
+  );
+  const installed = installedIndex();
 
   if (!fresh || forceRefresh || builds.length === 0) {
     const gathered: KernelBuild[] = [];
     const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds()]);
-    for (const result of results) {
+    const sourceEngines = [['chrome', 'chromium'], ['firefox']];
+    results.forEach((result, index) => {
       if (result.status === 'fulfilled') gathered.push(...result.value);
-    }
+      else gathered.push(...builds.filter((build) => sourceEngines[index]?.includes(build.engine)));
+    });
 
     if (gathered.length > 0) {
       builds = gathered;
       writeJson(CACHE_FILE(), { fetchedAt: Date.now(), builds } satisfies CacheShape);
-    } else if (builds.length === 0) {
+    } else if (builds.length === 0 && installed.size === 0) {
       throw new Error(
         'The browser catalog could not be reached. Check the connection and try again - ' +
           'existing installations still work.',
@@ -266,32 +270,25 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
     }
   }
 
-  const installed = installedIndex();
+  // Previously installed versions remain selectable and removable after vendor catalogs rotate.
+  const catalogIds = new Set(builds.map((build) => build.id));
+  for (const local of installed.values()) {
+    if (!catalogIds.has(local.id)) {
+      builds = [...builds, {
+        id: local.id, engine: local.engine, version: local.version,
+        channel: 'installed', os: platformSuffix(), downloadUrl: '',
+        installed: true, path: local.exePath, sizeBytes: 0,
+      }];
+    }
+  }
   return builds
     .map((build) => {
       const local = installed.get(build.id);
       return local
-        ? { ...build, installed: true, path: local.exePath, sizeBytes: fs.existsSync(local.path) ? dirSize(local.path) : 0 }
-        : { ...build, installed: false, path: '', sizeBytes: 0 };
+        ? { ...build, installed: true, path: local.exePath }
+        : { ...build, installed: false, path: '' };
     })
     .sort((a, b) => b.engine.localeCompare(a.engine) || compareVersions(b.version, a.version));
-}
-
-function dirSize(dir: string): number {
-  let total = 0;
-  try {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      try {
-        total += entry.isDirectory() ? dirSize(full) : fs.statSync(full).size;
-      } catch {
-        /* a locked file still counts as zero rather than failing the listing */
-      }
-    }
-  } catch {
-    /* an unreadable folder reports zero */
-  }
-  return total;
 }
 
 export async function downloadKernel(
@@ -358,7 +355,12 @@ function downloadFile(
           reject(new Error('The download redirected too many times.'));
           return;
         }
-        resolve(downloadFile(response.headers.location, destination, onProgress, redirectsLeft - 1));
+        const next = new URL(response.headers.location, url);
+        if (next.protocol !== 'https:') {
+          reject(new Error('Refusing an insecure browser download redirect.'));
+          return;
+        }
+        resolve(downloadFile(next.href, destination, onProgress, redirectsLeft - 1));
         return;
       }
 
@@ -370,15 +372,24 @@ function downloadFile(
 
       const total = Number(response.headers['content-length'] ?? 0);
       let received = 0;
+      let lastProgress = 0;
       const file = fs.createWriteStream(destination);
 
       response.on('data', (chunk: Buffer) => {
         received += chunk.length;
-        onProgress(received, total);
+        const now = Date.now();
+        if (now - lastProgress >= 100 || (total > 0 && received === total)) {
+          lastProgress = now;
+          onProgress(received, total);
+        }
       });
       response.pipe(file);
 
-      file.on('finish', () => file.close(() => resolve()));
+      file.on('finish', () => file.close(() => {
+        if (total > 0 && received !== total) reject(new Error('The browser download was incomplete.'));
+        else resolve();
+      }));
+      response.on('aborted', () => { file.destroy(); reject(new Error('The browser download was interrupted.')); });
       file.on('error', (error) => {
         file.destroy();
         reject(error);

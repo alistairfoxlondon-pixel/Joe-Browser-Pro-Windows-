@@ -224,7 +224,7 @@ export function BrowsersPage({
                           <Chip tone="muted">{kernel.channel}</Chip>
                         </div>
                         <div className="row-sub">
-                          {kernel.os} · {Math.round(kernel.sizeBytes / 1_048_576)} MB
+                          {kernel.os}{kernel.sizeBytes > 0 ? ` · ${Math.round(kernel.sizeBytes / 1_048_576)} MB` : null}
                         </div>
                         {progress[kernel.id] !== undefined ? (
                           <div className="progress" style={{ marginTop: 6 }}>

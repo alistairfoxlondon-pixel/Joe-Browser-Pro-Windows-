@@ -1005,11 +1005,11 @@ export function registerIpc(context: IpcContext): void {
 }
 
 /**
- * The installed kernel used by the fewest profiles, preferring the profile's own engine.
- * Returns '' when nothing is installed, so the profile simply follows the system browser.
+ * The app-managed build of this engine used by the fewest profiles.
+ * Returns '' when no matching build is installed.
  */
 function leastUsedKernel(engine: string): string {
-  const installed = installedKernels();
+  const installed = installedKernels().filter((kernel) => kernel.engine === engine);
   if (installed.length === 0) return '';
 
   const usage = new Map<string, number>();
@@ -1020,12 +1020,11 @@ function leastUsedKernel(engine: string): string {
   const ranked = installed
     .map((kernel) => ({
       id: kernel.id,
-      sameEngine: kernel.engine === engine ? 0 : 1,
       used: usage.get(kernel.id) ?? 0,
     }))
-    .sort((a, b) => a.sameEngine - b.sameEngine || a.used - b.used);
+    .sort((a, b) => a.used - b.used);
 
-  return ranked[0]?.used === 0 ? ranked[0]!.id : '';
+  return ranked[0]?.id ?? '';
 }
 
 function folderSize(target: string): number {

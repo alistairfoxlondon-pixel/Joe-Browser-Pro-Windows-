@@ -786,3 +786,60 @@ test('IP lookup response has a timeout after the socket connects', async () => {
   try { await assert.rejects(httpGetOver(socket, 'example.test', '/', 50), /timed out/); }
   finally { socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('managed build assignment and duplication never cross browser engines', async () => {
+  const { Paths } = await import('../src/main/core/paths');
+  const { listKernels } = await import('../src/main/core/catalog');
+  const previous = store.getSettings();
+  const ids = ['chrome-1-stable', 'chrome-2-stable', 'firefox-3-stable'];
+  const created: string[] = [];
+  try {
+    for (const [id, engine, version] of [['chrome-1-stable', 'chrome', '1'], ['chrome-2-stable', 'chrome', '2'], ['firefox-3-stable', 'firefox', '3']]) {
+      const dir = path.join(Paths.kernels, id!);
+      fs.mkdirSync(dir, { recursive: true });
+      const exePath = path.join(dir, 'browser');
+      fs.writeFileSync(exePath, 'test');
+      fs.writeFileSync(path.join(dir, 'kernel.json'), JSON.stringify({ id, engine, version, path: dir, exePath, installedAt: '' }));
+    }
+    store.saveSettings({ defaultEngine: 'chrome', defaultKernelId: 'firefox-3-stable' });
+    const source = store.createProfile({ name: 'Engine check', engine: 'chrome' });
+    created.push(source.id);
+    assert.ok(source.kernelId.startsWith('chrome-'));
+    const duplicate = store.duplicateProfile(source.id);
+    created.push(duplicate.id);
+    assert.ok(duplicate.kernelId.startsWith('chrome-'));
+    assert.notEqual(source.kernelId, duplicate.kernelId);
+    // A fresh cache with an unrelated entry must not hide older installed versions.
+    fs.writeFileSync(Paths.storeFile('catalog.json'), JSON.stringify({ fetchedAt: Date.now(), builds: [{ id: 'other', engine: 'chrome', version: '9', channel: 'stable', os: '', downloadUrl: '', installed: false, path: '', sizeBytes: 0 }] }));
+    const listed = await listKernels();
+    for (const id of ids) assert.ok(listed.some((build) => build.id === id && build.installed));
+  } finally {
+    for (const id of created) store.deleteProfile(id, false);
+    store.saveSettings({ defaultEngine: previous.defaultEngine, defaultKernelId: previous.defaultKernelId });
+    for (const id of ids) fs.rmSync(path.join(Paths.kernels, id), { recursive: true, force: true });
+    fs.rmSync(Paths.storeFile('catalog.json'), { force: true });
+  }
+});
+
+test('clearing a live profile never clears unrelated storage or hides CDP errors', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const profile = store.draftProfile({ name: 'Clear scope test' });
+  const session = new BrowserSession(profile, async () => { throw new Error('unused'); });
+  const calls: string[] = [];
+  const fake = { send: async (method: string) => {
+    calls.push(method);
+    if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'page', type: 'page' }] };
+    if (method === 'Target.attachToTarget') return { sessionId: 'session' };
+    if (method === 'Network.clearBrowserCookies') throw new Error('rejected');
+    return {};
+  } };
+  (session as unknown as { cdp: unknown }).cdp = fake;
+  assert.equal(await session.clearStorage('cache'), true);
+  assert.ok(calls.includes('Network.clearBrowserCache'));
+  assert.ok(!calls.includes('Network.clearBrowserCookies'));
+  assert.ok(!calls.includes('Storage.clearDataForOrigin'));
+  assert.equal(await session.clearStorage('cookies'), false);
+  const previousCalls = calls.length;
+  assert.equal(await session.clearStorage('siteData'), false);
+  assert.equal(calls.length, previousCalls);
+});

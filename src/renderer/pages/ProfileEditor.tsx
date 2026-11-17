@@ -2,7 +2,6 @@ import { parseProxyLine } from '../../shared/parseProxy';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   AppSettings,
-  DetectedBrowser,
   FingerprintConfig,
   KernelBuild,
   Profile,
@@ -77,7 +76,6 @@ export function ProfileEditor({
 
   const [tab, setTab] = useState<Tab>('general');
   const [draft, setDraft] = useState<Profile | null>(profile);
-  const [browsers, setBrowsers] = useState<DetectedBrowser[]>([]);
   const [kernels, setKernels] = useState<KernelBuild[]>([]);
   const [proxies, setProxies] = useState<ProxyEntry[]>([]);
   const proxySelection = useRef(0);
@@ -117,12 +115,10 @@ export function ProfileEditor({
 
   useEffect(() => {
     void (async () => {
-      const [nextBrowsers, nextKernels, nextProxies] = await Promise.all([
-        bridge().detectInstalledBrowsers().catch(() => []),
+      const [nextKernels, nextProxies] = await Promise.all([
         bridge().listKernels().catch(() => []),
         bridge().listProxies().catch(() => []),
       ]);
-      setBrowsers(nextBrowsers);
       setKernels(nextKernels.filter((kernel) => kernel.installed));
       setProxies(nextProxies);
     })();
@@ -409,12 +405,7 @@ export function ProfileEditor({
                     }
                   }}
                 >
-                  <option value="auto">{t('ed.engine.system')}</option>
-                  {browsers.map((browser) => (
-                    <option key={browser.engine} value={browser.engine}>
-                      {browser.name} {browser.version}
-                    </option>
-                  ))}
+                  <option value={draft.engine}>{draft.engine} (automatic build)</option>
                   {kernels.length > 0 ? (
                     <optgroup label={t('br.kernels')}>
                       {kernels.map((kernel) => (
@@ -424,21 +415,8 @@ export function ProfileEditor({
                       ))}
                     </optgroup>
                   ) : null}
-                  <option value="custom">{t('ed.engine.custom')}</option>
                 </select>
               </Field>
-
-              {draft.engine === 'custom' ? (
-                <Field label={t('ed.engine.path')} span={2}>
-                  <input
-                    className="input mono"
-                    value={draft.browserPath}
-                    onChange={(event) => patch({ browserPath: event.target.value })}
-                    placeholder="C:\\Program Files\\…\\chrome.exe"
-                    spellCheck={false}
-                  />
-                </Field>
-              ) : null}
 
               <Field label={t('ed.status')} hint={t('ed.status.hint')}>
                 <input
@@ -515,6 +493,8 @@ export function ProfileEditor({
                 <div style={{ marginTop: 3 }}>{t('ed.fp.firefox.body')}</div>
               </Banner>
             ) : null}
+
+            <Banner>{t('ed.fp.emulation')}</Banner>
 
             <div className="section-label">{t('ed.fp.locale.sub')}</div>
             <div className="form-grid three">

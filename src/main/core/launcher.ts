@@ -467,15 +467,12 @@ export class BrowserSession extends EventEmitter {
 
   async clearStorage(scope: 'cache' | 'cookies' | 'siteData'): Promise<boolean> {
     if (!this.cdp) return false;
+    // CDP has no browser-wide "clear all site data" command: clearing the current
+    // origin would leave other origins behind. Ask the user to close the profile instead.
+    if (scope === 'siteData') return false;
     try {
-      // The browser-wide commands are the honest ones for a live profile: they go through the
-      // browser's own storage layer rather than deleting files under an open handle.
-      await this.cdp.send('Storage.clearDataForOrigin', { origin: '', storageTypes: 'all' }).catch(() => undefined);
-      const types =
-        scope === 'cookies' ? 'cookies' : scope === 'cache' ? 'cache_storage,local_storage' : 'all';
-      await this.cdp.send('Network.clearBrowserCache').catch(() => undefined);
-      await this.cdp.send('Network.clearBrowserCookies').catch(() => undefined);
-      void types;
+      const page = await this.primaryPageSession();
+      await this.cdp.send(scope === 'cache' ? 'Network.clearBrowserCache' : 'Network.clearBrowserCookies', {}, page);
       return true;
     } catch {
       return false;
