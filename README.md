@@ -27,7 +27,12 @@ outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
 | **Fingerprint check** | A surface-by-surface comparison of what the profile claims against what a page will observe, plus one click to the six checker sites inside the profile's own session. |
 | **History per profile** | Every page a profile visits, recorded in its own file and invisible to every other profile. Clearable. |
 | **Proxy watch** | The exit address is checked on the profile's interval; a rotation, a proxy that stopped answering and a proxy that came back are all reported. A running profile can be re-pointed without closing its tabs. |
-| **Built to be read** | A real layout system, two themes, and a window that works at every width. |
+| **A local account and a lock** | An email account stored as a salted PBKDF2 hash, an optional PIN typed at every launch, and an optional authenticator code. The window locks after the idle interval you set. Nothing is sent anywhere. |
+| **Workspace audit and repair** | Every pair of profiles is compared across twelve surfaces, plus shared exit addresses and shared builds. "Fix what can be fixed" re-rolls the newer duplicates, oldest identity kept. |
+| **Batch create** | Up to 200 at once, a group, a proxy per line, and a distinct identity and build for every one - not 200 copies of the same machine. |
+| **Cookie manager** | Export a profile's cookies and import them into another, over the browser's own debugging protocol. |
+| **15 languages** | English is complete; each other table shows the share of the interface it covers, and anything missing falls back to English rather than to a key. |
+| **Built to be read** | A real layout system, two themes, a navigation rail that collapses, and a window that works at every width. |
 | **Private by default** | Profile data stays in `%APPDATA%\JoeBrowser`. Proxy passwords are encrypted with Windows DPAPI. No telemetry, no server, no cloud. |
 
 ## Where your data lives
@@ -37,6 +42,8 @@ outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
   Profiles.json      profile records (proxy passwords are ciphertext)
   Settings.json      window theme and defaults
   key.bin            fallback encryption key, owner-only (DPAPI is used when available)
+  accounts.json      local accounts and lock settings, encrypted as a whole
+  session.json       who is signed in - identity only, never a credential
   profiles\<id>\     one Chromium/Firefox user-data-dir per profile
   kernels\<id>\      browsers downloaded by the app
 ```

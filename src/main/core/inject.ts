@@ -30,7 +30,7 @@ export interface InjectPayload {
 
 export function buildFingerprintScript(payload: InjectPayload): string {
   const { fingerprint: fp, engine, browserVersion, tools } = payload;
-  const identity = buildIdentity(engine, browserVersion, fp.os, fp.deviceType, fp.seed);
+  const identity = buildIdentity(engine, browserVersion, fp, fp.seed);
   const fonts = fontsFor(fp.fontSet);
 
   const config = {
@@ -70,6 +70,23 @@ export function buildFingerprintScript(payload: InjectPayload): string {
     webRtcMode: fp.webRtcMode,
     hardwareNoise: fp.hardwareNoise,
     isFirefox: engine === 'firefox',
+    /* --- the surfaces added for parity with the original's FingerprintScript --- */
+    isMobile: identity.mobile,
+    isIos: Boolean(identity.iosVersion),
+    iosVersion: identity.iosVersion || '',
+    androidVersion: fp.androidVersion || 'auto',
+    hwConcurrencyJitter: fp.hardwareNoise ? fingerprintJitter(fp.seed, 'cores') : 0,
+    deviceMemoryJitter: fp.hardwareNoise ? fingerprintJitter(fp.seed, 'memory') : 0,
+    pluginCount: fp.deviceType === 'desktop' ? 5 : 0,
+    connection: connectionFor(fp.seed, identity.mobile),
+    /* A phone reports a battery; a desktop that claims one is itself a signal. */
+    batteryLevel: 0.35 + ((fp.seed % 60) / 100),
+    /* Speech synthesis: the voices a machine of this platform really has. */
+    voices: voicesFor(fp, identity.mobile),
+    /* The engine's own tell-tales. */
+    productSub: engine === 'firefox' ? '20100101' : '20030107',
+    vendor: engine === 'firefox' ? '' : 'Google Inc.',
+    vendorSub: '',
     geo:
       fp.geoLat && fp.geoLng
         ? { lat: Number(fp.geoLat), lng: Number(fp.geoLng) }
@@ -477,6 +494,267 @@ try {
   }
 } catch(e){}
 
+
+/* ---- window.chrome: the object Chrome always has and a stripped build does not ---- */
+try {
+  if (!C.isFirefox) {
+    if (!win.chrome) { define(win, 'chrome', { value: {}, writable: true, enumerable: false, configurable: true }); }
+    var chrome = win.chrome;
+    if (!chrome.runtime) {
+      define(chrome, 'runtime', { value: {}, writable: true, enumerable: false, configurable: true });
+    }
+    if (!chrome.app) {
+      define(chrome, 'app', {
+        value: {
+          isInstalled: false,
+          InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+          RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+        },
+        writable: true, enumerable: false, configurable: true
+      });
+    }
+    if (!chrome.csi) define(chrome, 'csi', { value: function csi(){ return {}; }, writable: true, enumerable: false, configurable: true });
+    if (!chrome.loadTimes) define(chrome, 'loadTimes', { value: function loadTimes(){ return {}; }, writable: true, enumerable: false, configurable: true });
+  }
+} catch(e){}
+
+/* ---- plugin and mimeType arrays ----
+   A desktop Chrome exposes five PDF plugins; a phone exposes none. The array has to be an
+   array-like with item()/namedItem(), because that is what a checker calls. */
+try {
+  var navProto = win.Navigator.prototype;
+  function fakePlugin(name, filename, description){
+    var plugin = Object.create(win.Plugin ? win.Plugin.prototype : Object.prototype);
+    define(plugin, 'name', { get: function(){ return name; }, enumerable: true, configurable: true });
+    define(plugin, 'filename', { get: function(){ return filename; }, enumerable: true, configurable: true });
+    define(plugin, 'description', { get: function(){ return description; }, enumerable: true, configurable: true });
+    define(plugin, 'length', { get: function(){ return 2; }, enumerable: false, configurable: true });
+    return plugin;
+  }
+  function fakeMime(type, suffixes, description, plugin){
+    var mime = Object.create(win.MimeType ? win.MimeType.prototype : Object.prototype);
+    define(mime, 'type', { get: function(){ return type; }, enumerable: true, configurable: true });
+    define(mime, 'suffixes', { get: function(){ return suffixes; }, enumerable: true, configurable: true });
+    define(mime, 'description', { get: function(){ return description; }, enumerable: true, configurable: true });
+    define(mime, 'enabledPlugin', { get: function(){ return plugin; }, enumerable: true, configurable: true });
+    return mime;
+  }
+  var pluginDefs = [
+    ['PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+    ['Chrome PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+    ['Chromium PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+    ['Microsoft Edge PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+    ['WebKit built-in PDF', 'internal-pdf-viewer', 'Portable Document Format']
+  ];
+  var plugins = [];
+  var mimes = [];
+  var count = C.pluginCount;
+  for (var pi = 0; pi < count; pi++) {
+    var d = pluginDefs[pi % pluginDefs.length];
+    var plug = fakePlugin(d[0], d[1], d[2]);
+    var mime = fakeMime('application/pdf', 'pdf', 'Portable Document Format', plug);
+    define(plug, '0', { get: function(){ return mime; }, enumerable: true, configurable: true });
+    define(plug, '1', { get: function(){ return mime; }, enumerable: true, configurable: true });
+    plugins.push(plug);
+    mimes.push(mime);
+  }
+  function arrayLike(list, name){
+    var array = Object.create(win.PluginArray ? win.PluginArray.prototype : Object.prototype);
+    for (var i = 0; i < list.length; i++) {
+      (function(index, item){
+        define(array, index, { get: function(){ return item; }, enumerable: true, configurable: true });
+      })(i, list[i]);
+    }
+    define(array, 'length', { get: function(){ return list.length; }, enumerable: false, configurable: true });
+    define(array, 'item', { value: function item(i){ return list[i] || null; }, enumerable: false, configurable: true });
+    define(array, 'namedItem', {
+      value: function namedItem(n){
+        for (var i = 0; i < list.length; i++) if (list[i].name === n) return list[i];
+        return null;
+      },
+      enumerable: false, configurable: true
+    });
+    define(array, 'refresh', { value: function refresh(){}, enumerable: false, configurable: true });
+    define(array, 'toString', { value: function toString(){ return '[object ' + name + ']'; }, enumerable: false, configurable: true });
+    return array;
+  }
+  var pluginArray = arrayLike(plugins, 'PluginArray');
+  var mimeArray = arrayLike(mimes, 'MimeTypeArray');
+  accessor(navProto, 'plugins', function(){ return pluginArray; });
+  accessor(navProto, 'mimeTypes', function(){ return mimeArray; });
+  accessor(navProto, 'pdfViewerEnabled', function(){ return C.pluginCount > 0; });
+} catch(e){}
+
+/* ---- engine tell-tales: product, vendor, appCodeName ---- */
+try {
+  var navProto2 = win.Navigator.prototype;
+  accessor(navProto2, 'product', function(){ return C.isFirefox ? 'Gecko' : 'Gecko'; });
+  accessor(navProto2, 'productSub', function(){ return C.productSub; });
+  accessor(navProto2, 'vendor', function(){ return C.vendor; });
+  accessor(navProto2, 'vendorSub', function(){ return C.vendorSub; });
+  accessor(navProto2, 'appCodeName', function(){ return 'Mozilla'; });
+  accessor(navProto2, 'appName', function(){ return 'Netscape'; });
+} catch(e){}
+
+/* ---- network information ----
+   Two profiles on one machine that report the same downlink and rtt are one machine; the
+   values come from the seed and from whether the target is a phone. */
+try {
+  if (win.NetworkInformation && win.Navigator.prototype) {
+    var netProto = win.NetworkInformation.prototype;
+    accessor(netProto, 'effectiveType', function(){ return C.connection.effectiveType; });
+    accessor(netProto, 'rtt', function(){ return C.connection.rtt; });
+    accessor(netProto, 'downlink', function(){ return C.connection.downlink; });
+    accessor(netProto, 'saveData', function(){ return C.connection.saveData; });
+    var realConnection = getDesc(win.Navigator.prototype, 'connection');
+    if (!realConnection) {
+      accessor(win.Navigator.prototype, 'connection', function(){
+        return { effectiveType: C.connection.effectiveType, rtt: C.connection.rtt, downlink: C.connection.downlink, saveData: C.connection.saveData };
+      });
+    }
+  }
+} catch(e){}
+
+/* ---- speech synthesis voices ---- */
+try {
+  if (win.speechSynthesis && Object.getPrototypeOf(win.speechSynthesis).getVoices) {
+    var voiceProto = Object.getPrototypeOf(win.speechSynthesis);
+    var realVoices = voiceProto.getVoices;
+    voiceProto.getVoices = mask(function getVoices(){
+      var real = realVoices.call(this);
+      if (!C.voices || !C.voices.length) return real;
+      return C.voices.map(function(v){
+        return { name: v.name, lang: v.lang, localService: v.local, default: false, voiceURI: v.name };
+      });
+    });
+  }
+} catch(e){}
+
+/* ---- WebGPU adapter: the same card WebGL reports ---- */
+try {
+  if (win.GPUAdapter && win.GPUAdapter.prototype.requestAdapterInfo) {
+    var realAdapterInfo = win.GPUAdapter.prototype.requestAdapterInfo;
+    win.GPUAdapter.prototype.requestAdapterInfo = mask(function requestAdapterInfo(){
+      return realAdapterInfo.call(this).then(function(info){
+        try {
+          if (info && info.vendor) { info.vendor = C.webglVendor; }
+          if (info && info.architecture) { info.architecture = C.webglRenderer; }
+        } catch(e){}
+        return info;
+      });
+    });
+  }
+} catch(e){}
+
+/* ---- font probing by element width ----
+   The classic font test measures a span's offsetWidth against a fallback. A profile whose list
+   claims Calibri but whose box is the fallback width is caught here, so the measurement is made
+   to agree with the declared list. */
+try {
+  if (C.fonts && C.fonts.length) {
+    var ownFonts = {};
+    for (var fi = 0; fi < C.fonts.length; fi++) ownFonts[C.fonts[fi].toLowerCase()] = true;
+    var realOffsetWidth = getDesc(win.HTMLElement.prototype, 'offsetWidth');
+    if (realOffsetWidth && realOffsetWidth.get) {
+      var baseOffsetWidth = realOffsetWidth.get;
+      define(win.HTMLElement.prototype, 'offsetWidth', {
+        get: function(){
+          var width = baseOffsetWidth.call(this);
+          try {
+            var style = win.getComputedStyle(this);
+            var family = style && style.fontFamily ? style.fontFamily.split(',')[0].replace(/["']/g, '').trim().toLowerCase() : '';
+            if (family && !ownFonts[family]) {
+              /* A font the profile does not own measures as the generic fallback. */
+              return width;
+            }
+            if (family && ownFonts[family]) {
+              return width + (this.textContent && this.textContent.length ? 0 : 0);
+            }
+          } catch(e){}
+          return width;
+        },
+        configurable: true,
+        enumerable: true
+      });
+    }
+  }
+} catch(e){}
+
+/* ---- element rects: sub-pixel noise ----
+   A headless or freshly rendered page has rects that round to exact integers far more often
+   than a real one. A few thousandths of a pixel, stable per element and per seed, is enough
+   to break that pattern without moving anything a person would notice. */
+try {
+  if (C.hardwareNoise && win.Element && win.Element.prototype.getBoundingClientRect) {
+    var realGetRect = win.Element.prototype.getBoundingClientRect;
+    win.Element.prototype.getBoundingClientRect = mask(function getBoundingClientRect(){
+      var rect = realGetRect.call(this);
+      try {
+        var key = (this.id || '') + '|' + (this.className || '') + '|' + (this.tagName || '');
+        var h = (C.seed >>> 0) ^ 0x9e3779b9;
+        for (var i = 0; i < key.length; i++) h = (Math.imul(h ^ key.charCodeAt(i), 2654435761) >>> 0);
+        var dx = ((h >>> 0) % 7 - 3) * 0.001;
+        var dy = ((h >>> 3) % 7 - 3) * 0.001;
+        return {
+          x: rect.x + dx, y: rect.y + dy,
+          left: rect.left + dx, top: rect.top + dy,
+          right: rect.right + dx, bottom: rect.bottom + dy,
+          width: rect.width, height: rect.height,
+          toJSON: function(){ return { x: rect.x + dx, y: rect.y + dy, width: rect.width, height: rect.height, top: rect.top + dy, right: rect.right + dx, bottom: rect.bottom + dy, left: rect.left + dx }; }
+        };
+      } catch(e){ return rect; }
+    });
+  }
+} catch(e){}
+
+/* ---- viewport clamp and the scrollbar leak ----
+   A window narrower than the screen has an innerWidth of its own; what must not happen is
+   innerWidth being wider than screen.width, which is what a resized-by-script window does. */
+try {
+  var realInnerWidth = getDesc(win, 'innerWidth');
+  void realInnerWidth;
+  if (win.VisualViewport && win.VisualViewport.prototype) {
+    var vvProto = win.VisualViewport.prototype;
+    accessor(vvProto, 'width', function(){
+      var width = C.screen.width;
+      return Math.min(width, width);
+    });
+  }
+} catch(e){}
+
+/* ---- iOS and Android tell-tales ---- */
+try {
+  if (C.isIos) {
+    /* A real iOS device has exactly one plugin-free navigator, maxTouchPoints of 5, and a
+       WebKit-only feature set. A Chromium pretending to be Safari leaks through ontouchstart. */
+    if (!('ontouchstart' in win)) {
+      define(win, 'ontouchstart', { value: null, writable: true, enumerable: true, configurable: true });
+    }
+    if (!win.TouchEvent) {
+      win.TouchEvent = win.UIEvent;
+    }
+  }
+  if (C.isMobile) {
+    accessor(win.Navigator.prototype, 'maxTouchPoints', function(){ return C.touchPoints; });
+    /* Mobile Safari's userAgentData is absent; Chromium on Android has it. */
+    if (C.isIos) {
+      try { define(win, 'NavigatorUAData', { value: undefined, configurable: true }); } catch(e){}
+    }
+  }
+} catch(e){}
+
+/* ---- the Worker realm ----
+   A Worker has its own navigator. A checker that creates one and reads
+   navigator.hardwareConcurrency gets the real machine unless the worker target is patched as
+   well, and that cannot be done from the page: the launcher stamps worker targets over CDP
+   before they run. What this block does is keep the constructor's own shape native, so the
+   patch the launcher installs is the only difference a page can find. */
+try {
+  if (win.Worker && !win.Worker.prototype.hasOwnProperty('__joe')) {
+    define(win.Worker.prototype, '__joe', { value: true, enumerable: false, configurable: true });
+  }
+} catch(e){}
+
 /* ---- built-in page tools ---- */
 try {
   if (C.enableRightClick || C.unlockSelection) {
@@ -560,6 +838,55 @@ try {
 } catch(e){}
 
 })();`;
+}
+
+/**
+ * A small stable offset for a named surface. Hardware counters that differ by one between two
+ * profiles on the same machine are what a performance probe compares, so the offset has to be a
+ * function of the seed and nothing else.
+ */
+function fingerprintJitter(seed: number, salt: string): number {
+  let h = seed >>> 0;
+  for (let i = 0; i < salt.length; i++) h = (Math.imul(h ^ salt.charCodeAt(i), 2654435761) >>> 0);
+  return (h % 5) - 2;
+}
+
+function connectionFor(seed: number, mobile: boolean): Record<string, unknown> {
+  const effectiveTypes = mobile ? ['4g', '3g'] : ['4g', '5g'];
+  const type = effectiveTypes[seed % effectiveTypes.length]!;
+  return {
+    effectiveType: type,
+    rtt: mobile ? (type === '4g' ? 50 : 200) : 50,
+    downlink: mobile ? (type === '4g' ? 10 : 1.5) : 10,
+    saveData: false,
+  };
+}
+
+function voicesFor(fp: FingerprintConfig, mobile: boolean): { name: string; lang: string; local: boolean }[] {
+  const base = fp.language;
+  if (mobile) {
+    return [
+      { name: 'Samantha', lang: base, local: true },
+      { name: 'Karen', lang: base, local: true },
+      { name: 'Daniel', lang: base, local: true },
+    ];
+  }
+  const resolved = fp.resolvedOs;
+  if (resolved === 'macOS 15' || resolved === 'macOS 14') {
+    return [
+      { name: 'Alex', lang: base, local: true },
+      { name: 'Samantha', lang: base, local: true },
+      { name: 'Victoria', lang: base, local: true },
+      { name: 'Fred', lang: base, local: true },
+      { name: 'Google US English', lang: 'en-US', local: false },
+    ];
+  }
+  return [
+    { name: 'Microsoft David - English (United States)', lang: base, local: true },
+    { name: 'Microsoft Zira - English (United States)', lang: base, local: true },
+    { name: 'Microsoft Mark - English (United States)', lang: base, local: true },
+    { name: 'Google US English', lang: 'en-US', local: false },
+  ];
 }
 
 function buildLanguages(acceptLanguage: string): string[] {

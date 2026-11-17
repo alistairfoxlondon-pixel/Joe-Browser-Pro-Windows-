@@ -1,235 +1,328 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { DetectedBrowser, KernelBuild } from '../../shared/types';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import type { AppSettings, DetectedBrowser, KernelBuild, SystemInfo } from '../../shared/types';
 import { bridge, onEvent } from '../bridge';
-import { Empty, Spinner, bytes } from '../components/UI';
+import { useI18n } from '../i18n';
+import { Icon } from '../components/Icon';
+import { Banner, Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
 
-const ENGINE_NAMES: Record<string, string> = {
-  chrome: 'Google Chrome',
-  chromium: 'Chromium',
-  edge: 'Microsoft Edge',
-  brave: 'Brave',
-  firefox: 'Firefox',
-  opera: 'Opera',
-};
-
-const FILTERS = ['all', 'chrome', 'chromium', 'firefox'] as const;
+/**
+ * Browsers and builds.
+ *
+ * Two different things share this page because they answer one question: which binary will a
+ * profile launch? A detected browser is whatever this PC already has; a downloaded build is one
+ * this app owns, so every profile pinned to it reports the same version and no silent update can
+ * move the version under a logged-in session.
+ *
+ * The graphics card panel lives here too, because reading the adapter means launching a browser,
+ * and that is exactly what this page is about.
+ */
 
 export function BrowsersPage({
-  toast,
+  settings,
+  saveSettings,
 }: {
-  toast(kind: 'info' | 'success' | 'warn' | 'error', title: string, detail?: string): void;
-}) {
-  const [builds, setBuilds] = useState<KernelBuild[]>([]);
-  const [detected, setDetected] = useState<DetectedBrowser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('all');
-  const [working, setWorking] = useState<string>('');
-  const [progress, setProgress] = useState<Record<string, number>>({});
+  settings: AppSettings;
+  saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+}): ReactNode {
+  const { t } = useI18n();
+  const toast = useToast();
+  const confirm = useConfirm();
 
-  async function load(refresh = false) {
-    setLoading(true);
-    setError('');
+  const [browsers, setBrowsers] = useState<DetectedBrowser[]>([]);
+  const [kernels, setKernels] = useState<KernelBuild[]>([]);
+  const [system, setSystem] = useState<SystemInfo | null>(null);
+  const [progress, setProgress] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState('');
+  const [learning, setLearning] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
     try {
-      const [list, local] = await Promise.all([
+      const [nextBrowsers, nextKernels, nextSystem] = await Promise.all([
+        bridge().detectInstalledBrowsers().catch(() => []),
         bridge().listKernels(),
-        bridge().detectInstalledBrowsers(),
+        bridge().getSystemInfo(),
       ]);
-      setBuilds(list);
-      setDetected(local);
-      void refresh;
-    } catch (cause) {
-      setError(messageOf(cause));
+      setBrowsers(nextBrowsers);
+      setKernels(nextKernels);
+      setSystem(nextSystem);
+    } catch (error) {
+      toast.error(t('err.generic'), messageOf(error));
     } finally {
       setLoading(false);
     }
-  }
+  }, [t, toast]);
 
   useEffect(() => {
     void load();
-    const off = onEvent('kernel:progress', (payload) => {
-      const { id, received, total } = payload as { id: string; received: number; total: number };
-      setProgress((current) => ({
-        ...current,
-        [id]: total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0,
-      }));
-    });
-    return off;
-  }, []);
+  }, [load]);
 
-  const visible = useMemo(
-    () => builds.filter((build) => filter === 'all' || build.engine === filter),
-    [builds, filter],
+  useEffect(
+    () =>
+      onEvent('kernel:progress', (payload) => {
+        const data = payload as { id: string; received: number; total: number };
+        const percent = data.total > 0 ? Math.round((100 * data.received) / data.total) : 0;
+        setProgress((current) => ({ ...current, [data.id]: percent }));
+      }),
+    [],
   );
 
-  const installed = builds.filter((build) => build.installed);
-
-  async function install(build: KernelBuild) {
-    setWorking(build.id);
-    setProgress((current) => ({ ...current, [build.id]: 0 }));
+  const download = async (kernel: KernelBuild) => {
+    setBusy(kernel.id);
+    setProgress((current) => ({ ...current, [kernel.id]: 0 }));
     try {
-      await bridge().downloadKernel(build.id);
-      toast('success', `${ENGINE_NAMES[build.engine] ?? build.engine} ${build.version} installed`, 'It can now be pinned to a profile.');
-      await load(true);
-    } catch (cause) {
-      toast('error', 'Could not install that build', messageOf(cause));
+      await bridge().downloadKernel(kernel.id);
+      toast.success(t('br.installed'), `${kernel.engine} ${kernel.version}`);
+      await load();
+    } catch (error) {
+      toast.error(t('br.download'), messageOf(error));
     } finally {
-      setWorking('');
+      setBusy('');
       setProgress((current) => {
         const next = { ...current };
-        delete next[build.id];
+        delete next[kernel.id];
         return next;
       });
     }
-  }
+  };
 
-  async function remove(build: KernelBuild) {
-    setWorking(build.id);
+  const remove = async (kernel: KernelBuild) => {
+    const ok = await confirm.ask({
+      title: t('br.remove'),
+      body: t('br.remove.body').replace('{name}', `${kernel.engine} ${kernel.version}`),
+      confirmLabel: t('btn.delete'),
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(kernel.id);
     try {
-      await bridge().removeKernel(build.id);
-      toast('success', 'Build removed');
-      await load(true);
-    } catch (cause) {
-      toast('error', 'Could not remove that build', messageOf(cause));
+      await bridge().removeKernel(kernel.id);
+      await load();
+    } catch (error) {
+      toast.error(t('err.generic'), messageOf(error));
     } finally {
-      setWorking('');
+      setBusy('');
     }
-  }
+  };
+
+  const learn = async () => {
+    setLearning(true);
+    try {
+      const gpu = await bridge().learnMachineGpu();
+      toast.success(t('br.gpu.done'), gpu.renderer);
+      await load();
+    } catch (error) {
+      toast.error(t('br.gpu'), messageOf(error));
+    } finally {
+      setLearning(false);
+    }
+  };
+
+  const installed = kernels.filter((kernel) => kernel.installed);
 
   return (
     <>
-      <div className="main-head">
-        <div>
-          <h1 className="main-title">Browsers</h1>
-          <p className="main-sub">
-            Pinned builds from the vendors’ own release channels. Nothing downloads until you ask
-            for it, or a profile needs it.
-          </p>
+      <header className="header">
+        <div className="header-titles">
+          <h1>{t('br.title')}</h1>
+          <div className="sub">
+            {browsers.length} detected · {installed.length} downloaded builds
+          </div>
         </div>
-        <div className="head-actions">
-          <button className="btn" onClick={() => void load(true)} disabled={loading}>
-            {loading ? <Spinner /> : null} Refresh catalog
-          </button>
+        <div className="header-actions">
+          <Button variant="soft" icon="refresh" onClick={() => void load()}>
+            {t('btn.detect')}
+          </Button>
         </div>
-      </div>
+      </header>
 
-      <div className="main-body">
-        <div className="stat-row">
-          <div className="stat">
-            <div className="k">Installed builds</div>
-            <div className="v">{installed.length}</div>
-          </div>
-          <div className="stat">
-            <div className="k">On disk</div>
-            <div className="v">{bytes(installed.reduce((sum, b) => sum + b.sizeBytes, 0))}</div>
-          </div>
-          <div className="stat">
-            <div className="k">Browsers on this PC</div>
-            <div className="v">{detected.length}</div>
-          </div>
-        </div>
-
-        {detected.length > 0 ? (
-          <>
-            <div className="section-label" style={{ marginBottom: 8 }}>
-              Already on this PC
-            </div>
-            <div className="list" style={{ marginBottom: 22 }}>
-              {detected.map((browser) => (
-                <div className="list-row" key={`${browser.engine}-${browser.path}`}>
-                  <div className="avatar" style={{ width: 30, height: 30, fontSize: 12 }}>
-                    {(ENGINE_NAMES[browser.engine] ?? browser.engine).charAt(0)}
+      <div className="content">
+        <div className="content-inner">
+          <div className="section-label">{t('br.detected')}</div>
+          {browsers.length === 0 && !loading ? (
+            <EmptyState
+              icon="browsers"
+              title={t('br.none')}
+              body="No Chrome, Edge, Brave or Firefox was found in the usual places. Download a build below, or install a browser and detect again."
+              action={
+                <Button variant="primary" icon="refresh" onClick={() => void load()}>
+                  {t('btn.detect')}
+                </Button>
+              }
+            />
+          ) : (
+            <div className="rows">
+              {browsers.map((browser) => (
+                <div className="row" key={browser.path}>
+                  <div className="row-icon" style={{ background: 'var(--accent-soft)', color: 'var(--accent-hi)' }}>
+                    <Icon name="browsers" />
                   </div>
-                  <div className="list-main">
-                    <div className="list-title">{browser.name}</div>
-                    <div className="list-sub mono">{browser.path}</div>
+                  <div className="row-main">
+                    <div className="row-title">
+                      {browser.name}
+                      <Chip tone="ok">{t('br.version').replace('{v}', browser.version)}</Chip>
+                      {settings.defaultEngine === browser.engine ? <Chip tone="accent">{t('set.browser')}</Chip> : null}
+                    </div>
+                    <div className="row-sub mono">{browser.path}</div>
                   </div>
-                  <span className="chip">{browser.version || 'unknown'}</span>
-                  <span className="chip ok">ready to use</span>
+                  <div className="row-actions">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon="check"
+                      onClick={() => void saveSettings({ defaultEngine: browser.engine })}
+                      title={t('set.browser')}
+                    >
+                      {t('set.browser')}
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
-          </>
-        ) : null}
+          )}
 
-        <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-          {FILTERS.map((entry) => (
-            <button
-              key={entry}
-              className={`btn btn-sm ${filter === entry ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setFilter(entry)}
-            >
-              {entry === 'all' ? 'All engines' : ENGINE_NAMES[entry] ?? entry}
-            </button>
-          ))}
-        </div>
-
-        {error ? (
-          <Empty
-            icon="⚠"
-            title="The catalog could not be read"
-            body={error}
-            action={
-              <button className="btn" onClick={() => void load(true)}>
-                Try again
-              </button>
-            }
-          />
-        ) : loading && builds.length === 0 ? (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: 'var(--muted)', padding: 20 }}>
-            <Spinner /> Reading the vendor release channels…
-          </div>
-        ) : visible.length === 0 ? (
-          <Empty icon="◎" title="No builds listed" body="Refresh the catalog to fetch the current release channels." />
-        ) : (
-          <div className="list">
-            {visible.slice(0, 60).map((build) => (
-              <div className="list-row" key={build.id}>
-                <div className="list-main">
-                  <div className="list-title">
-                    {ENGINE_NAMES[build.engine] ?? build.engine}{' '}
-                    <span className="mono" style={{ color: 'var(--muted)', fontWeight: 400 }}>
-                      {build.version}
-                    </span>
+          <div className="section-label">{t('br.kernels')}</div>
+          {installed.length === 0 ? (
+            <EmptyState icon="download" title={t('br.kernel.empty')} body={t('br.kernel.empty.body')} />
+          ) : (
+            <div className="rows">
+              {installed.map((kernel) => (
+                <div className="row" key={kernel.id}>
+                  <div className="row-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
+                    <Icon name="layers" />
                   </div>
-                  <div className="list-sub">
-                    {build.channel} · {build.os}
-                    {build.installed ? ` · ${bytes(build.sizeBytes)} on disk` : ''}
-                  </div>
-                  {progress[build.id] !== undefined ? (
-                    <div className="progress" style={{ marginTop: 7, maxWidth: 320 }}>
-                      <div style={{ width: `${progress[build.id]}%` }} />
+                  <div className="row-main">
+                    <div className="row-title">
+                      {kernel.engine} {kernel.version}
+                      <Chip tone="ok">{t('br.installed')}</Chip>
+                      {kernel.channel && kernel.channel !== 'stable' ? <Chip tone="warn">{kernel.channel}</Chip> : null}
                     </div>
-                  ) : null}
+                    <div className="row-sub mono">{kernel.path || kernel.os}</div>
+                  </div>
+                  <div className="row-actions">
+                    <Button size="sm" variant="ghost" icon="trash" onClick={() => void remove(kernel)} busy={busy === kernel.id}>
+                      {t('br.remove')}
+                    </Button>
+                  </div>
                 </div>
+              ))}
+            </div>
+          )}
 
-                {build.installed ? (
-                  <>
-                    <span className="chip ok">installed</span>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      disabled={working === build.id}
-                      onClick={() => void remove(build)}
-                    >
-                      Remove
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="btn btn-sm"
-                    disabled={working === build.id}
-                    onClick={() => void install(build)}
-                  >
-                    {working === build.id ? <Spinner /> : null}
-                    {working === build.id ? 'Installing' : 'Install'}
-                  </button>
-                )}
+          {kernels.filter((kernel) => !kernel.installed).length > 0 ? (
+            <>
+              <div className="section-label">{t('br.download')}</div>
+              <div className="rows">
+                {kernels
+                  .filter((kernel) => !kernel.installed)
+                  .slice(0, 30)
+                  .map((kernel) => (
+                    <div className="row" key={kernel.id}>
+                      <div className="row-icon">
+                        <Icon name="download" />
+                      </div>
+                      <div className="row-main">
+                        <div className="row-title">
+                          {kernel.engine} {kernel.version}
+                          <Chip tone="muted">{kernel.channel}</Chip>
+                        </div>
+                        <div className="row-sub">
+                          {kernel.os} · {Math.round(kernel.sizeBytes / 1_048_576)} MB
+                        </div>
+                        {progress[kernel.id] !== undefined ? (
+                          <div className="progress" style={{ marginTop: 6 }}>
+                            <span style={{ width: `${progress[kernel.id]}%` }} />
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="row-actions">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon="download"
+                          busy={busy === kernel.id}
+                          onClick={() => void download(kernel)}
+                        >
+                          {progress[kernel.id] !== undefined
+                            ? t('br.downloading').replace('{n}', String(progress[kernel.id]))
+                            : t('br.download')}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
               </div>
-            ))}
+            </>
+          ) : null}
+
+          <div className="section-label">{t('br.machine')}</div>
+          <div className="panel">
+            <div className="panel-head">
+              <Icon name="cpu" size={16} />
+              <h3>{t('br.gpu')}</h3>
+              <div className="grow" />
+              <Button size="sm" variant="soft" icon="cpu" onClick={learn} busy={learning}>
+                {t('br.gpu.learn')}
+              </Button>
+            </div>
+
+            <div className="stack tight">
+              <div>
+                <div className="field-label">{t('ed.gpu')}</div>
+                <div className="mono" style={{ fontSize: 12.2, marginTop: 3 }}>
+                  {system?.gpuRenderer || settings.machineGlRenderer || <span className="faint">not read yet</span>}
+                </div>
+              </div>
+              <div className="hint">{t('br.gpu.hint')}</div>
+
+              <div className="divider" />
+              <div className="stat-grid">
+                <Stat value={system?.os ?? '—'} label={t('set.platform')} />
+                <Stat value={system?.cores ?? '—'} label={t('ed.cores')} />
+                <Stat
+                  value={system ? `${Math.round(system.memoryBytes / 1_073_741_824)} GB` : '—'}
+                  label={t('ed.memory')}
+                />
+                <Stat value={system?.timezone ?? '—'} label={t('ed.timezone')} />
+                <Stat value={system?.locale ?? '—'} label={t('set.interface')} />
+              </div>
+            </div>
           </div>
-        )}
+
+          <div className="section-label">{t('set.browser')}</div>
+          <div className="panel">
+            <Field label={t('set.browser')} hint={t('ed.browser.hint')}>
+              <select
+                className="select"
+                value={settings.defaultEngine}
+                onChange={(event) => void saveSettings({ defaultEngine: event.target.value })}
+              >
+                <option value="auto">{t('ed.engine.system')}</option>
+                {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
+                  <option key={engine} value={engine}>
+                    {t(`br.engine.${engine}`, engine)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="divider" />
+            <Toggle
+              checked={settings.extensionsEnabled}
+              onChange={(extensionsEnabled) => void saveSettings({ extensionsEnabled })}
+              label={t('set.ext')}
+            />
+          </div>
+
+          {settings.machineGlRenderer ? (
+            <Banner tone="ok" icon="check">
+              Profiles can use the card this PC actually has. The editor's “{t('ed.fp.useThis')}” button fills it
+              in per profile, and the value is kept here as the default.
+            </Banner>
+          ) : null}
+        </div>
       </div>
+
+      {confirm.dialog}
     </>
   );
 }

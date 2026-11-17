@@ -67,22 +67,42 @@ test('the clock, locale and coordinates follow the proxy country', () => {
 });
 
 test('the user agent, platform and brands agree with the claimed OS', () => {
-  const windows = buildIdentity('chrome', '157.0.8103.41', 'Windows 11', 'desktop', 5);
+  const onWindows = generateFingerprint({ seed: 5, os: 'Windows 11' });
+  const windows = buildIdentity('chrome', '157.0.8103.41', onWindows, 5);
   assert.match(windows.userAgent, /Windows NT 10\.0; Win64; x64/);
   assert.match(windows.userAgent, /Chrome\/157\.0\.0\.0/);
   assert.equal(windows.platform, 'Win32');
   assert.equal(windows.osPlatform, 'Windows');
   assert.ok(windows.brands.some((b) => b.brand === 'Google Chrome' && b.version === '157'));
 
-  const mac = buildIdentity('chrome', '157.0.8103.41', 'macOS 15', 'desktop', 5);
+  const onMac = generateFingerprint({ seed: 5, os: 'macOS' });
+  const mac = buildIdentity('chrome', '157.0.8103.41', onMac, 5);
   assert.match(mac.userAgent, /Macintosh; Intel Mac OS X/);
   assert.equal(mac.platform, 'MacIntel');
   assert.equal(mac.osPlatform, 'macOS');
 
-  const firefox = buildIdentity('firefox', '141.0', 'Windows 11', 'desktop', 5);
+  const firefox = buildIdentity('firefox', '141.0', onWindows, 5);
   assert.match(firefox.userAgent, /Firefox\/141\.0/);
   // Firefox exposes no client hints; an empty list is the honest answer.
   assert.equal(firefox.brands.length, 0);
+});
+
+test('a phone target produces a phone, not a desktop with a mobile string', () => {
+  const phone = generateFingerprint({ seed: 88, os: 'iPhone' });
+  assert.equal(phone.deviceType, 'mobile');
+
+  const identity = buildIdentity('chrome', '157.0.8103.41', phone, 88);
+  // Safari is the only engine on iOS, and the UA has to say so.
+  assert.match(identity.userAgent, /iPhone|iPad/);
+  assert.match(identity.userAgent, /Safari/);
+  assert.equal(identity.platform, 'iPhone');
+
+  const android = generateFingerprint({ seed: 88, os: 'Android' });
+  const androidIdentity = buildIdentity('chrome', '157.0.8103.41', android, 88);
+  assert.match(androidIdentity.userAgent, /Android \d+/);
+  assert.match(androidIdentity.userAgent, /Mobile/);
+  // A desktop UA here would reveal the device as a laptop pretending.
+  assert.doesNotMatch(androidIdentity.userAgent, /Windows NT|Macintosh/);
 });
 
 test('the injected script parses as JavaScript and carries the overrides', () => {
@@ -296,4 +316,253 @@ test('the relay listens on loopback and refuses to invent an upstream', async ()
   const relay = await startRelay({ type: 'socks5', host: '127.0.0.1', port: 9, user: '', password: '' });
   assert.ok(relay.port > 0);
   await relay.close();
+});
+
+/* ------------------------------------------------------------------ accounts and the lock */
+
+const accounts = await import('../src/main/core/accounts');
+
+test('a registered account round-trips through the store', () => {
+  accounts.reloadAccounts();
+  const created = accounts.register('Owner@Example.com', 'correct horse battery', 'Owner');
+  assert.equal(created.email, 'owner@example.com', 'the address was not normalised');
+  assert.equal(created.displayName, 'Owner');
+
+  const found = accounts.findByEmail('OWNER@example.com');
+  assert.ok(found, 'the account could not be found by a differently cased address');
+  assert.equal(found?.displayName, 'Owner');
+
+  assert.equal(accounts.signIn('owner@example.com', 'correct horse battery').email, 'owner@example.com');
+
+  // A wrong password is refused, and reads as a wrong password rather than as a missing account.
+  assert.throws(
+    () => accounts.signIn('owner@example.com', 'wrong'),
+    (error: unknown) => (error as { code?: string }).code === 'wrong-password',
+  );
+
+  // Registering the same address twice is refused rather than silently replacing the first.
+  assert.throws(
+    () => accounts.register('owner@example.com', 'another password', 'Owner'),
+    (error: unknown) => (error as { code?: string }).code === 'exists',
+  );
+});
+
+test('the account file never contains the password or its hash in the clear', () => {
+  // The store is encrypted as a whole, so the test is that the plaintext is not reachable by
+  // reading the file - which is the actual threat: someone opening it in Notepad.
+  const file = path.join(scratch, 'accounts.json');
+  assert.ok(fs.existsSync(file), 'the account store was not written');
+
+  const raw = fs.readFileSync(file, 'utf8');
+  assert.equal(raw.includes('correct horse battery'), false, 'the password reached the store file');
+  assert.equal(raw.includes('joe@example.com'), false, 'the email reached the store file in the clear');
+
+  const parsed = JSON.parse(raw) as { format?: string; ciphertext?: string };
+  assert.equal(parsed.format, 'joe-accounts');
+  assert.ok((parsed.ciphertext ?? '').length > 0, 'the store was not encrypted');
+});
+
+test('a PIN is stored as a hash and checked without revealing it', () => {
+  accounts.setPin('owner@example.com', '4821');
+  assert.equal(accounts.pinRequired('owner@example.com'), true);
+  assert.equal(accounts.checkPin('owner@example.com', '4821'), true);
+  assert.equal(accounts.checkPin('owner@example.com', '1234'), false);
+
+  // A PIN that is too short or not numeric is refused rather than saved weakly.
+  assert.throws(() => accounts.setPin('owner@example.com', '12'));
+  assert.throws(() => accounts.setPin('owner@example.com', 'abcd'));
+
+  // An empty PIN removes the lock entirely.
+  accounts.setPin('owner@example.com', '');
+  assert.equal(accounts.pinRequired('owner@example.com'), false);
+});
+
+test('a TOTP secret produces codes that verify, and only when they should', () => {
+  const secret = accounts.newTotpSecret();
+  assert.equal(secret.length, 32, 'a 20-byte secret is 32 base32 characters');
+
+  // The RFC 6238 reference vector: the ASCII secret "12345678901234567890" is
+  // GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ, and its code at T=59 is 287082.
+  const reference = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+  assert.equal(accounts.totpCode(reference, Math.floor(59 / 30)), '287082');
+
+  const now = Math.floor(Date.now() / 30_000);
+  const current = accounts.totpCode(secret, now);
+  assert.equal(current.length, 6);
+  assert.equal(accounts.verifyTotp(secret, current), true);
+
+  // One step of drift is tolerated in either direction, two is not.
+  assert.equal(accounts.verifyTotp(secret, accounts.totpCode(secret, now - 1)), true);
+  assert.equal(accounts.verifyTotp(secret, accounts.totpCode(secret, now + 1)), true);
+  assert.equal(accounts.verifyTotp(secret, accounts.totpCode(secret, now + 2)), false);
+
+  // Malformed input is a no, not a crash.
+  assert.equal(accounts.verifyTotp(secret, ''), false);
+  assert.equal(accounts.verifyTotp(secret, 'abcdef'), false);
+  assert.equal(accounts.verifyTotp('', current), false);
+});
+
+test('two-factor is only enabled once a real code has been proved', () => {
+  const email = 'owner@example.com';
+  accounts.disableTotp(email);
+
+  const pending = accounts.pendingTotp(email);
+  assert.ok(pending.length > 0, 'no candidate secret was offered');
+  assert.ok(accounts.otpAuthUri(pending, email).startsWith('otpauth://totp/'));
+
+  // A wrong code must not arm the factor: scanning a QR that is never confirmed has to leave
+  // nothing behind.
+  assert.throws(
+    () => accounts.enableTotp(email, pending, '000000'),
+    (error: unknown) => (error as { code?: string }).code === 'totp-wrong',
+  );
+  assert.equal(accounts.findByEmail(email)?.totpSecret, '');
+
+  const step = Math.floor(Date.now() / 30_000);
+  accounts.enableTotp(email, pending, accounts.totpCode(pending, step));
+  assert.equal(accounts.findByEmail(email)?.totpSecret, pending);
+
+  // Once armed, a sign-in without a code is refused and with one is accepted.
+  assert.throws(
+    () => accounts.signIn(email, 'correct horse battery'),
+    (error: unknown) => (error as { code?: string }).code === 'totp-required',
+  );
+
+  accounts.disableTotp(email);
+  assert.equal(accounts.findByEmail(email)?.totpSecret, '');
+});
+
+test('the session marker names an account, and dies with it', () => {
+  accounts.signIn('owner@example.com', 'correct horse battery');
+  const marker = accounts.readSession();
+  assert.equal(marker?.email, 'owner@example.com');
+
+  // The marker holds only the identity: nothing here may be a credential.
+  const raw = fs.readFileSync(path.join(scratch, 'session.json'), 'utf8');
+  assert.equal(raw.includes('hash'), false, 'the session marker carries a password hash');
+  assert.equal(raw.includes('totp'), false, 'the session marker carries a second factor secret');
+
+  assert.equal(accounts.currentAccount()?.email, 'owner@example.com');
+
+  accounts.signOut();
+  assert.equal(accounts.currentAccount(), null);
+
+  // A marker pointing at a deleted account must not sign anybody in.
+  accounts.signIn('owner@example.com', 'correct horse battery');
+  accounts.removeAccount('owner@example.com');
+  assert.equal(accounts.currentAccount(), null);
+  assert.equal(accounts.storeIsUnreadable(), false);
+});
+
+test('a corrupt account store is preserved rather than overwritten', () => {
+  accounts.reloadAccounts();
+  accounts.register('second@example.com', 'another password', 'Second');
+
+  const file = path.join(scratch, 'accounts.json');
+  fs.writeFileSync(file, '{"format":"joe-accounts","ciphertext":"not-a-ciphertext"}', 'utf8');
+
+  accounts.reloadAccounts();
+  assert.equal(accounts.storeIsUnreadable(), true, 'an unreadable store was accepted as empty');
+  // The refusal is the protection: a save here would replace every registration with nothing.
+  assert.throws(() => accounts.register('third@example.com', 'yet another', 'Third'), /not being overwritten/);
+
+  // The damaged file is still on disk, and a copy was taken beside it.
+  const siblings = fs.readdirSync(scratch).filter((name) => name.startsWith('accounts.json'));
+  assert.ok(siblings.length >= 2, `expected a backup beside the store, found ${siblings.join(', ')}`);
+
+  // Start clean for anything after this test.
+  for (const name of siblings) fs.unlinkSync(path.join(scratch, name));
+  accounts.reloadAccounts();
+});
+
+/* ------------------------------------------------------------------ kernel diversity */
+
+const diversity = await import('../src/main/core/diversity');
+
+function kernel(id: string, engine = 'chrome', version = '141.0.7390.54'): {
+  id: string;
+  engine: string;
+  version: string;
+  path: string;
+  exePath: string;
+  installedAt: string;
+} {
+  return { id, engine, version, path: `/kernels/${id}`, exePath: `/kernels/${id}/chrome.exe`, installedAt: '' };
+}
+
+test('a lone build is never pinned, and says why', () => {
+  const only = [kernel('chrome-141.0.7390.54')];
+  const result = diversity.assignKernel(only, []);
+
+  // Pinning the only build would make every profile break the day it is deleted, and buys
+  // nothing in the meantime.
+  assert.equal(result.kernelId, '');
+  assert.match(result.reason, /only one browser build/i);
+});
+
+test('builds are spread across the profiles that already use them', () => {
+  const available = [kernel('chrome-141.0.7390.54', 'chrome', '141.0.7390.54'), kernel('chrome-140.0.7339.80', 'chrome', '140.0.7339.80')];
+  const existing = [
+    { kernelId: 'chrome-141.0.7390.54' },
+    { kernelId: 'chrome-141.0.7390.54' },
+  ] as unknown as { kernelId: string }[] as never;
+
+  const result = diversity.assignKernel(available, existing as never);
+  // The unused build wins, so a fresh profile does not pile onto the popular one.
+  assert.equal(result.kernelId, 'chrome-140.0.7339.80');
+});
+
+test('a duplicate never lands on the build its source is using', () => {
+  const available = [kernel('chrome-141.0.7390.54'), kernel('firefox-141.0')];
+  const source = { kernelId: 'chrome-141.0.7390.54' } as never;
+
+  const result = diversity.assignDifferentKernel(available, source, [source]);
+  assert.notEqual(result.kernelId, 'chrome-141.0.7390.54');
+  assert.equal(result.kernelId, 'firefox-141.0');
+
+  // With only the source's build installed, the copy falls back to the sentinel rather than
+  // inheriting the pin: identical down to the binary is the one thing a re-roll cannot fix.
+  const alone = diversity.assignDifferentKernel([kernel('chrome-141.0.7390.54')], source, [source]);
+  assert.equal(alone.kernelId, '');
+  assert.match(alone.reason, /only the source/i);
+});
+
+test('kernel diversity is counted across a workspace', () => {
+  const profiles = [
+    { kernelId: 'chrome-141' },
+    { kernelId: 'chrome-141' },
+    { kernelId: 'firefox-141' },
+    { kernelId: '' },
+  ] as never;
+  assert.equal(diversity.distinctKernels(profiles), 3);
+});
+
+/* ------------------------------------------------------------------ disk space */
+
+const disk = await import('../src/main/core/disk');
+
+test('the disk guard refuses before a write rather than after it', () => {
+  const free = disk.freeBytes();
+  assert.ok(free === -1 || free > 0, 'free space reported as zero or negative');
+
+  // Asking for more than any CI machine has must fail with a sentence, not a raw errno.
+  if (free > 0) {
+    assert.throws(
+      () => disk.requireSpace(free + 1_000_000_000, 'install a build'),
+      (error: unknown) => error instanceof disk.DiskFullError,
+    );
+  }
+
+  // A small write on a machine with room must pass and report the free bytes.
+  assert.doesNotThrow(() => disk.requireSpace(1024, 'write a profile'));
+});
+
+test('a full disk is recognised from every shape the error arrives in', () => {
+  assert.equal(disk.isDiskFull({ code: 'ENOSPC' }), true);
+  assert.equal(disk.isDiskFull({ code: 'EDQUOT' }), true);
+  assert.equal(disk.isDiskFull(new Error('ENOSPC: no space left on device, write')), true);
+  assert.equal(disk.isDiskFull(new Error('The disk is full')), true);
+  assert.equal(disk.isDiskFull(new Error('Failed to create network context data directory')), false);
+  assert.equal(disk.isDiskFull(null), false);
+  assert.equal(disk.isDiskFull(undefined), false);
 });

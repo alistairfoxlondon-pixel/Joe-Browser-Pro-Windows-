@@ -1,14 +1,32 @@
-import type { DesktopOs, DeviceType, FingerprintConfig } from '../../shared/types';
+import type {
+  DeviceTarget,
+  FingerprintConfig,
+  ResolvedOs,
+} from '../../shared/types';
 import { Rng, hashString } from './rng';
-import { buildIdentity } from './ua';
+import { acceptLanguageFor, buildIdentity } from './ua';
 import { BY_CODE, ZONES } from '../../shared/zones';
+import {
+  GPUS_BY_TARGET,
+  SCREENS_BY_TARGET,
+  SYSTEM_TARGET,
+  androidVersionFor,
+  gpuPoolKey,
+  hostTarget,
+  iosVersionFor,
+  isAndroidTarget,
+  isIosTarget,
+  resolveTarget,
+  touchPointsFor,
+} from '../../shared/devices';
 
 /**
  * The identity factory.
  *
  * Rules this file lives by:
- *  - A coherent identity beats a random one. Every field is drawn from pools that
- *    occur together in the real world (a 4-core machine does not carry 32 GB of RAM).
+ *  - A coherent identity beats a random one. Every field is drawn from pools that occur
+ *    together in the real world (a 4-core machine does not carry 32 GB of RAM, and a phone is
+ *    not 3840 pixels wide at a device pixel ratio of 1).
  *  - The same seed always yields the same machine, so a profile is stable across launches.
  *  - A new identity must differ from every profile already in the store across twelve
  *    surfaces, or it is re-rolled. Two profiles that share a canvas hash are one profile as
@@ -38,54 +56,10 @@ interface GpuCard {
   weight: number;
 }
 
-/** Real vendor/renderer pairs. A renderer that no card ever shipped is worse than no spoof. */
-const GPU_WINDOWS: GpuCard[] = [
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 10 },
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 9 },
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 8 },
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 6 },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 11 },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 9 },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 7 },
-  { vendor: 'Google Inc. (AMD)', renderer: 'ANGLE (AMD, AMD Radeon RX 580 Series Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 6 },
-  { vendor: 'Google Inc. (AMD)', renderer: 'ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 5 },
-  { vendor: 'Google Inc. (Microsoft)', renderer: 'ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0, D3D11)', weight: 2 },
-];
-
-const GPU_MAC: GpuCard[] = [
-  { vendor: 'Google Inc. (Apple)', renderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)', weight: 10 },
-  { vendor: 'Google Inc. (Apple)', renderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)', weight: 9 },
-  { vendor: 'Google Inc. (Apple)', renderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3, Unspecified Version)', weight: 6 },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics, OpenGL 4.1)', weight: 3 },
-];
-
-const GPU_LINUX: GpuCard[] = [
-  { vendor: 'Google Inc. (Mesa)', renderer: 'ANGLE (Mesa, llvmpipe (LLVM 15.0.7, 256 bits), OpenGL 4.5)', weight: 6 },
-  { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL 4.6)', weight: 5 },
-  { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1050/PCIe/SSE2, OpenGL 4.5)', weight: 3 },
-];
-
-interface ScreenProfile {
-  w: number;
-  h: number;
-  avail: number;
-  dpr: number;
-  weight: number;
-}
-
-/** avail is the difference between outer height and the taskbar, kept realistic. */
-const SCREENS_DESKTOP: ScreenProfile[] = [
-  { w: 1920, h: 1080, avail: 1040, dpr: 1, weight: 34 },
-  { w: 1920, h: 1080, avail: 1050, dpr: 1, weight: 8 },
-  { w: 2560, h: 1440, avail: 1400, dpr: 1, weight: 12 },
-  { w: 1366, h: 768, avail: 728, dpr: 1, weight: 11 },
-  { w: 1536, h: 864, avail: 824, dpr: 1.25, weight: 8 },
-  { w: 1440, h: 900, avail: 860, dpr: 1, weight: 4 },
-  { w: 1680, h: 1050, avail: 1010, dpr: 1, weight: 3 },
-  { w: 3840, h: 2160, avail: 2120, dpr: 1.5, weight: 6 },
-  { w: 1600, h: 900, avail: 860, dpr: 1, weight: 4 },
-  { w: 1280, h: 720, avail: 680, dpr: 1, weight: 3 },
-];
+/** Kept for compatibility with the old signature; the pools now live in shared/devices.ts. */
+const GPU_WINDOWS: GpuCard[] = GPUS_BY_TARGET['desktop-windows'];
+const GPU_MAC: GpuCard[] = GPUS_BY_TARGET['desktop-mac'];
+const GPU_LINUX: GpuCard[] = GPUS_BY_TARGET['desktop-linux'];
 
 const CORES_MEMORY: readonly (readonly [number, number, number])[] = [
   // [cores, gigabytes, weight] - values Chromium actually reports (memory is capped at 8).
@@ -99,14 +73,36 @@ const CORES_MEMORY: readonly (readonly [number, number, number])[] = [
   [20, 8, 2],
 ];
 
+/** A phone reports few cores and little RAM; a desktop with 20 cores in a phone is nonsense. */
+const MOBILE_CORES_MEMORY: readonly (readonly [number, number, number])[] = [
+  [8, 8, 46],
+  [8, 4, 22],
+  [6, 8, 12],
+  [4, 4, 10],
+  [8, 6, 10],
+];
+
 const FONT_SETS: Record<string, string[]> = {
-  windows: ['Arial', 'Calibri', 'Cambria', 'Consolas', 'Courier New', 'Georgia', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana'],
-  macos: ['Helvetica', 'Helvetica Neue', 'Menlo', 'Monaco', 'Optima', 'Palatino', 'San Francisco', 'Arial', 'Courier New', 'Georgia', 'Times New Roman', 'Verdana'],
-  linux: ['DejaVu Sans', 'Liberation Sans', 'Ubuntu', 'Noto Sans', 'Cantarell', 'Arial', 'Courier New', 'Georgia', 'Times New Roman'],
+  windows: [
+    'Arial', 'Calibri', 'Cambria', 'Consolas', 'Courier New', 'Georgia', 'Segoe UI',
+    'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana', 'Segoe UI Symbol',
+    'Microsoft Sans Serif', 'MS Gothic', 'Franklin Gothic Medium', 'Gabriola',
+  ],
+  macos: [
+    'Helvetica', 'Helvetica Neue', 'Menlo', 'Monaco', 'Optima', 'Palatino', 'San Francisco',
+    'Arial', 'Courier New', 'Georgia', 'Times New Roman', 'Verdana', 'Avenir',
+    'Avenir Next', 'Futura', 'Geneva', 'Lucida Grande',
+  ],
+  linux: [
+    'DejaVu Sans', 'Liberation Sans', 'Ubuntu', 'Noto Sans', 'Cantarell', 'Arial',
+    'Courier New', 'Georgia', 'Times New Roman', 'FreeSans', 'Liberation Serif',
+  ],
   minimal: ['Arial', 'Courier New', 'Times New Roman'],
+  ios: ['Helvetica', 'Helvetica Neue', 'Arial', 'Courier New', 'Georgia', 'Times New Roman', 'Verdana', 'Avenir'],
+  android: ['Roboto', 'Noto Sans', 'Droid Sans', 'Arial', 'Courier New', 'Georgia'],
 };
 
-const LANG_BY_OS: Record<DesktopOs, string[]> = {
+const LANG_BY_OS: Record<ResolvedOs, string[]> = {
   'Windows 11': ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'pt-BR', 'nl-NL', 'pl-PL', 'tr-TR', 'ru-RU', 'en-IN'],
   'Windows 10': ['en-US', 'en-GB', 'de-DE', 'fr-FR', 'es-ES', 'pt-BR', 'it-IT', 'tr-TR', 'pl-PL'],
   'macOS 15': ['en-US', 'en-GB', 'de-DE', 'ja-JP', 'fr-FR', 'es-ES', 'ko-KR'],
@@ -116,12 +112,14 @@ const LANG_BY_OS: Record<DesktopOs, string[]> = {
 
 export interface GenerateOptions {
   seed?: number;
-  os?: DesktopOs;
-  deviceType?: DeviceType;
+  /** The picker value. Everything else follows from it. */
+  os?: DeviceTarget;
   engine?: string;
   browserVersion?: string;
   /** Country code from a tested proxy, used to pull timezone and locale into agreement. */
   countryCode?: string;
+  /** A renderer to prefer, when the app has learned this machine's real card. */
+  preferredGpu?: { vendor: string; renderer: string } | null;
 }
 
 export function generateFingerprint(options: GenerateOptions = {}): FingerprintConfig {
@@ -131,53 +129,55 @@ export function generateFingerprint(options: GenerateOptions = {}): FingerprintC
 
 function buildFromSeed(seed: number, options: GenerateOptions): FingerprintConfig {
   const rng = new Rng(seed);
-  const deviceType: DeviceType = options.deviceType ?? 'desktop';
+  const target: DeviceTarget = options.os ?? SYSTEM_TARGET;
+  const resolved = resolveTarget(target);
+  const deviceType = resolved.deviceType;
+  const mobile = deviceType !== 'desktop';
 
-  const os: DesktopOs = options.os ??
-    (deviceType === 'desktop'
-      ? rng.weighted<DesktopOs>([
-          ['Windows 11', 58],
-          ['Windows 10', 20],
-          ['macOS 15', 10],
-          ['macOS 14', 7],
-          ['Linux', 5],
-        ])
-      : rng.weighted<DesktopOs>([['Windows 11', 45], ['Windows 10', 20], ['macOS 15', 20], ['macOS 14', 10], ['Linux', 5]]));
+  const screens = SCREENS_BY_TARGET[target] ?? SCREENS_BY_TARGET['System default']!;
+  const screen = rng.weighted(screens.map((s) => [s, s.weight] as const));
 
-  const gpuPool = os.startsWith('macOS') ? GPU_MAC : os === 'Linux' ? GPU_LINUX : GPU_WINDOWS;
-  const gpu = rng.weighted(gpuPool.map((g) => [g, g.weight] as const));
+  const pool = GPUS_BY_TARGET[gpuPoolKey(target)];
+  const learned = options.preferredGpu;
+  // A real card on this PC is better than a synthetic one, but only when the profile is not
+  // claiming a different machine: an M2 renderer on a Windows target is worse than no signal.
+  const gpu =
+    learned && !mobile && resolved.resolvedOs.startsWith('Windows')
+      ? { vendor: learned.vendor, renderer: learned.renderer, weight: 1 }
+      : rng.weighted(pool.map((g) => [g, g.weight] as const));
 
-  const screen = deviceType === 'desktop'
-    ? rng.weighted(SCREENS_DESKTOP.map((s) => [s, s.weight] as const))
-    : { w: 390, h: 844, avail: 844, dpr: 3, weight: 1 };
+  const [cores, memory] = rng.weighted(
+    (mobile ? MOBILE_CORES_MEMORY : CORES_MEMORY).map((row) => [row, row[2]] as const),
+  );
 
-  const [cores, memory] = rng.weighted(CORES_MEMORY.map((row) => [row, row[2]] as const));
-
-  const language = pickLanguage(rng, os, options.countryCode);
+  const language = pickLanguage(rng, resolved.resolvedOs, options.countryCode, mobile);
   const zone = resolveZone(language, options.countryCode, rng);
 
-  const fontSet = os === 'Linux' ? 'linux' : os.startsWith('macOS') ? 'macos' : 'windows';
+  const fontSet = fontSetFor(target);
   const engine = options.engine ?? 'chrome';
-  const identity = buildIdentity(engine, options.browserVersion ?? '157.0.8103.41', os, deviceType, seed);
+  const browserVersion = options.browserVersion ?? '157.0.8103.41';
 
-  return {
+  const base: FingerprintConfig = {
     seed,
-    os,
+    os: target,
     deviceType,
+    resolvedOs: resolved.resolvedOs,
     timezone: zone,
     language,
-    acceptLanguage: buildAcceptLanguage(language),
+    acceptLanguage: acceptLanguageFor(language),
     screenW: screen.w,
     screenH: screen.h,
     availW: screen.w,
-    availH: screen.avail,
+    // Desktop: the height left after a taskbar. Mobile: the browser's own chrome, so a phone
+    // reports availHeight several dozen pixels under screen.height too.
+    availH: screen.h - (mobile ? 78 : taskbarFor(screen.h)),
     colorDepth: 24,
     pixelRatio: screen.dpr,
     webGlVendor: gpu.vendor,
     webGlRenderer: gpu.renderer,
     cores,
     memory,
-    touchPoints: deviceType === 'desktop' ? 0 : rng.int(5, 10),
+    touchPoints: touchPointsFor(target, seed),
     canvasNoise: true,
     audioNoise: true,
     fontsNoise: true,
@@ -187,26 +187,57 @@ function buildFromSeed(seed: number, options: GenerateOptions): FingerprintConfi
     webRtcProtect: true,
     webRtcMode: 'proxy',
     geoMode: 'proxy',
-    geoLat: '',
-    geoLng: '',
+    geoLat: zone ? BY_CODE.get(options.countryCode?.toUpperCase() ?? '')?.lat ?? '' : '',
+    geoLng: zone ? BY_CODE.get(options.countryCode?.toUpperCase() ?? '')?.lng ?? '' : '',
     autoMatchProxy: true,
     autoUserAgent: true,
     androidVersion: 'auto',
     iosVersion: 'auto',
     fontSet,
+    engineKind: engine === 'firefox' ? 'firefox' : 'chrome',
     hardwareNoise: true,
+    userAgent: '',
+    platform: resolved.platform,
+    brand: 'Google Chrome',
+    userAgentOverride: '',
+    browserVersion,
+  };
+
+  const identity = buildIdentity(engine, browserVersion, base, seed);
+  return {
+    ...base,
     userAgent: identity.userAgent,
     platform: identity.platform,
     brand: identity.brands.find((b) => !b.brand.toLowerCase().includes('brand'))?.brand ?? 'Google Chrome',
-    userAgentOverride: '',
-    browserVersion: options.browserVersion ?? '157.0.8103.41',
+    androidVersion: isAndroidTarget(target) ? androidVersionFor(target, base) : 'auto',
+    iosVersion: isIosTarget(target) ? iosVersionFor(target, base) : 'auto',
   };
 }
 
-function pickLanguage(rng: Rng, os: DesktopOs, countryCode?: string): string {
+/** A plausible taskbar height for a desktop screen. */
+function taskbarFor(height: number): number {
+  if (height >= 2000) return 80;
+  if (height >= 1300) return 48;
+  return 40;
+}
+
+function fontSetFor(target: DeviceTarget): string {
+  if (isIosTarget(target)) return 'ios';
+  if (isAndroidTarget(target)) return 'android';
+  const resolved = resolveTarget(target).resolvedOs;
+  if (resolved === 'Linux') return 'linux';
+  if (resolved.startsWith('macOS')) return 'macos';
+  return 'windows';
+}
+
+function pickLanguage(rng: Rng, os: ResolvedOs, countryCode: string | undefined, mobile: boolean): string {
   if (countryCode) {
     const zone = BY_CODE.get(countryCode.toUpperCase());
     if (zone) return zone.langs[0]!;
+  }
+  if (mobile) {
+    // A phone's default locale is overwhelmingly its region's.
+    return rng.pick(['en-US', 'en-GB', 'en-US', 'de-DE', 'es-ES', 'fr-FR', 'pt-BR', 'ja-JP', 'en-IN']);
   }
   return rng.pick(LANG_BY_OS[os]);
 }
@@ -222,12 +253,6 @@ function resolveZone(language: string, countryCode: string | undefined, rng: Rng
   const candidates = ZONES.filter((z) => z.locale.split('-')[0] === base);
   if (candidates.length > 0) return rng.pick(candidates).timezone;
   return rng.pick(ZONES).timezone;
-}
-
-function buildAcceptLanguage(language: string): string {
-  const [base] = language.split('-');
-  if (!base || base === language) return language;
-  return `${language},${base};q=0.9`;
 }
 
 /** The twelve-surface signature two profiles must not share. */
@@ -284,6 +309,83 @@ export function checkUniqueness(
   return { unique: !collided, attempts: 1, collisions };
 }
 
+export type Relation = 'distinct' | 'linked' | 'remote';
+
+export interface Comparison {
+  relation: Relation;
+  /** The strongest shared surface, when two profiles are linked. */
+  surface: Surface | '';
+  /** How many surfaces the two share. */
+  shared: number;
+  /** A sentence for the editor: "Shares WebGL renderer and screen with Shop UK". */
+  summary: string;
+  /** The other profile in the strongest comparison. */
+  other: FingerprintConfig | null;
+}
+
+/**
+ * How this identity relates to the rest of the workspace.
+ *
+ * "Unique" is a claim the app should only make when it is true, so this returns the strongest
+ * relationship rather than a bare boolean. The editor shows the sentence; the audit page groups
+ * by it; the card gets a small linked marker.
+ */
+export function compareWithWorkspace(
+  candidate: FingerprintConfig,
+  others: FingerprintConfig[],
+): Comparison {
+  const mine = signature(candidate);
+  let best: Comparison = { relation: 'distinct', surface: '', shared: 0, summary: '', other: null };
+
+  for (const other of others) {
+    const theirs = signature(other);
+    const sharedSurfaces: Surface[] = [];
+    for (const surface of SURFACES) if (mine[surface] === theirs[surface]) sharedSurfaces.push(surface);
+    const shared = sharedSurfaces.length;
+
+    // Two machines with the same UA, screen, GPU, clock and touch profile are one machine to
+    // any site that sees both, whatever else differs.
+    const strong = sharedSurfaces.filter((s) =>
+      ['webgl', 'screen', 'timezone', 'platform', 'touch', 'userAgent'].includes(s),
+    );
+
+    if (shared > best.shared) {
+      const surface = (strong[0] ?? sharedSurfaces[0] ?? '') as Surface | '';
+      best = {
+        relation: strong.length >= 2 ? 'linked' : shared >= 8 ? 'linked' : 'remote',
+        surface,
+        shared,
+        summary:
+          strong.length >= 2
+            ? `shares ${strong.slice(0, 2).map(labelOf).join(' and ')} with another profile`
+            : `shares ${shared} of ${SURFACES.length} surfaces with another profile`,
+        other,
+      };
+    }
+  }
+
+  if (best.shared === 0) best = { relation: 'distinct', surface: '', shared: 0, summary: '', other: null };
+  return best;
+}
+
+export function labelOf(surface: Surface): string {
+  const labels: Record<Surface, string> = {
+    userAgent: 'the user agent',
+    platform: 'the platform',
+    screen: 'the screen',
+    webgl: 'the graphics card',
+    cores: 'the core count',
+    memory: 'the memory',
+    timezone: 'the clock',
+    language: 'the language',
+    fonts: 'the font list',
+    canvas: 'the canvas hash',
+    audio: 'the audio hash',
+    touch: 'the touch profile',
+  };
+  return labels[surface];
+}
+
 /**
  * Roll a new identity and re-roll it until it is distinct from everything already stored.
  * After 240 attempts the loop stops instead of spinning: a wall of near-identical machines is
@@ -325,11 +427,12 @@ export function alignWithProxy(
 ): FingerprintConfig {
   if (!countryCode) return fp;
   const zone = BY_CODE.get(countryCode.toUpperCase());
+  const language = zone?.langs[0] ?? fp.language;
   return {
     ...fp,
     timezone: zone?.timezone || timezone || fp.timezone,
-    language: zone?.langs[0] ?? fp.language,
-    acceptLanguage: buildAcceptLanguage(zone?.langs[0] ?? fp.language),
+    language,
+    acceptLanguage: acceptLanguageFor(language),
     geoLat: zone?.lat ?? fp.geoLat,
     geoLng: zone?.lng ?? fp.geoLng,
   };
@@ -338,3 +441,22 @@ export function alignWithProxy(
 export function fontsFor(fontSet: string): string[] {
   return FONT_SETS[fontSet] ?? FONT_SETS['windows']!;
 }
+
+/**
+ * The pools the editor's pickers are built from. Exported so the renderer can offer the same
+ * choices the factory draws from, instead of a hand-written list that drifts.
+ */
+export const POOLS = {
+  gpus: {
+    windows: GPU_WINDOWS,
+    macos: GPU_MAC,
+    linux: GPU_LINUX,
+    ios: GPUS_BY_TARGET.ios,
+    android: GPUS_BY_TARGET.android,
+  },
+  coresMemory: CORES_MEMORY,
+  fontSets: Object.keys(FONT_SETS),
+  languages: [...new Set(Object.values(LANG_BY_OS).flat())].sort(),
+  screens: SCREENS_BY_TARGET,
+  hostTarget,
+};

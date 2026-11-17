@@ -1,269 +1,435 @@
-import { useEffect, useState } from 'react';
-import type { AppInfo, AppSettings, StoreStats } from '../../shared/types';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import type { AccountSummary, AppInfo, AppSettings, LanguageInfo, StoreStats } from '../../shared/types';
 import { bridge } from '../bridge';
-import { Field, Spinner, Toggle, bytes } from '../components/UI';
+import { useI18n } from '../i18n';
+import { Icon } from '../components/Icon';
+import {
+  Banner,
+  Button,
+  Field,
+  Meter,
+  Segmented,
+  Stat,
+  Toggle,
+  useConfirm,
+  useToast,
+  bytes,
+} from '../components/UI';
+import { SecurityPanel } from './SecurityPanel';
 import { messageOf } from '../util';
+
+/**
+ * Settings.
+ *
+ * Four sections in the order a user changes them: how it looks, where it starts, what it stores,
+ * and what it is. The language picker is the honest one - every language is offered with the
+ * share of the interface it actually covers, because a table that is 55% done and a table that is
+ * finished look identical until you switch to it.
+ */
 
 export function SettingsPage({
   settings,
   info,
-  toast,
-  onSaved,
+  account,
+  saveSettings,
+  refreshProfiles,
+  onAccountChanged,
 }: {
-  settings: AppSettings | null;
+  settings: AppSettings;
   info: AppInfo | null;
-  toast(kind: 'info' | 'success' | 'warn' | 'error', title: string, detail?: string): void;
-  onSaved(next: AppSettings): void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
+  account: AccountSummary | null;
+  saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  refreshProfiles: () => Promise<void>;
+  onAccountChanged: () => Promise<void> | void;
+}): ReactNode {
+  const { t } = useI18n();
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  const [languages, setLanguages] = useState<LanguageInfo[]>([]);
   const [stats, setStats] = useState<StoreStats | null>(null);
+  const [busy, setBusy] = useState('');
+  const [logs, setLogs] = useState('');
 
   useEffect(() => {
-    let cancelled = false;
-    void bridge()
-      .getStoreStats()
-      .then((value) => {
-        if (!cancelled) setStats(value);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+    void (async () => {
+      setLanguages(await bridge().listLanguages().catch(() => []));
+      setStats(await bridge().getStoreStats().catch(() => null));
+    })();
   }, []);
 
-  if (!settings) {
-    return (
-      <div className="main-body" style={{ color: 'var(--muted)' }}>
-        Reading settings…
-      </div>
-    );
-  }
+  const save = useCallback(
+    async (patch: Partial<AppSettings>) => {
+      try {
+        await saveSettings(patch);
+      } catch (error) {
+        toast.error(t('err.save'), messageOf(error));
+      }
+    },
+    [saveSettings, t, toast],
+  );
 
-  async function save(patch: Partial<AppSettings>) {
-    try {
-      const next = await bridge().saveSettings(patch);
-      onSaved(next);
-    } catch (error) {
-      toast('error', 'Could not save that setting', messageOf(error));
-    }
-  }
-
-  async function reset() {
-    setBusy(true);
-    try {
-      await bridge().resetEverything();
-      toast('success', 'Everything was reset', 'Profiles and settings were cleared.');
-      setConfirmReset(false);
-    } catch (error) {
-      toast('error', 'Could not reset', messageOf(error));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const current = languages.find((language) => language.key === settings.language);
 
   return (
     <>
-      <div className="main-head">
-        <div>
-          <h1 className="main-title">Settings</h1>
-          <p className="main-sub">Everything here is local to this machine.</p>
+      <header className="header">
+        <div className="header-titles">
+          <h1>{t('header.settings')}</h1>
+          <div className="sub">{t('set.sub')}</div>
         </div>
-      </div>
+        <div className="header-actions">
+          <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
+            {t('set.data.open')}
+          </Button>
+          <Button variant="soft" icon="terminal" onClick={() => void bridge().openLogsDir()}>
+            {t('set.logs.open')}
+          </Button>
+        </div>
+      </header>
 
-      <div className="main-body">
-        <div className="list" style={{ marginBottom: 16 }}>
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Theme</div>
-              <div className="list-sub">Applies to the window immediately.</div>
+      <div className="content">
+        <div className="content-inner" style={{ maxWidth: 1080 }}>
+          <div className="section-label">{t('set.appearance')}</div>
+          <div className="panel">
+            <div className="spread" style={{ flexWrap: 'wrap', gap: 20 }}>
+              <div style={{ minWidth: 220, flex: 1 }}>
+                <div className="field-label">{t('set.theme')}</div>
+                <div style={{ marginTop: 6 }}>
+                  <Segmented
+                    value={settings.theme}
+                    onChange={(theme) => void save({ theme })}
+                    options={[
+                      { id: 'dark' as const, label: t('theme.night') },
+                      { id: 'light' as const, label: t('theme.day') },
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div style={{ minWidth: 220, flex: 1 }}>
+                <div className="field-label">{t('set.density')}</div>
+                <div style={{ marginTop: 6 }}>
+                  <Segmented
+                    value={settings.density}
+                    onChange={(density) => void save({ density })}
+                    options={[
+                      { id: 'comfortable' as const, label: t('view.cards') },
+                      { id: 'compact' as const, label: t('view.rows') },
+                    ]}
+                  />
+                </div>
+                <div className="hint" style={{ marginTop: 5 }}>{t('set.density.hint')}</div>
+              </div>
+
+              <div style={{ minWidth: 220, flex: 1 }}>
+                <Toggle
+                  checked={settings.startMaximized}
+                  onChange={(startMaximized) => void save({ startMaximized })}
+                  label="Open the window maximised"
+                />
+              </div>
             </div>
-            <select
-              className="select"
-              style={{ width: 160 }}
-              value={settings.theme}
-              onChange={(event) => void save({ theme: event.target.value as 'dark' | 'light' })}
-            >
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-            </select>
           </div>
 
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Default engine for new profiles</div>
-              <div className="list-sub">A new profile uses this unless you choose otherwise.</div>
+          <div className="section-label">{t('set.interface')}</div>
+          <div className="panel">
+            <div className="spread" style={{ marginBottom: 10 }}>
+              <Field label={t('set.interface')} hint={t('set.language.hint')}>
+                <div className="faint" style={{ fontSize: 11.8 }}>
+                  {current ? `${current.english} · ${current.coverage}%` : settings.language}
+                </div>
+              </Field>
             </div>
-            <select
-              className="select"
-              style={{ width: 190 }}
-              value={settings.defaultEngine}
-              onChange={(event) => void save({ defaultEngine: event.target.value })}
-            >
-              <option value="chrome">Google Chrome</option>
-              <option value="chromium">Chromium</option>
-              <option value="edge">Microsoft Edge</option>
-              <option value="brave">Brave</option>
-              <option value="firefox">Firefox</option>
-            </select>
+
+            <div className="lang-grid">
+              {languages.map((language) => (
+                <button
+                  key={language.key}
+                  className="lang"
+                  aria-selected={settings.language === language.key}
+                  onClick={() => void save({ language: language.key })}
+                  type="button"
+                >
+                  <span className="flag">
+                    <FlagBadge code={language.flag} />
+                  </span>
+                  <span className="name">
+                    {language.native}
+                    {language.native !== language.english ? (
+                      <span className="faint" style={{ marginLeft: 5, fontSize: 11 }}>
+                        {language.english}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="cov">{language.coverage}%</span>
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Extensions and built-in page tools</div>
-              <div className="list-sub">The master switch for every profile.</div>
+          <div className="section-label">{t('set.general')}</div>
+          <div className="panel">
+            <div className="form-grid">
+              <Field label={t('set.browser')} hint={t('ed.browser.hint')}>
+                <select className="select" value={settings.defaultEngine} onChange={(event) => void save({ defaultEngine: event.target.value })}>
+                  <option value="auto">{t('ed.engine.system')}</option>
+                  {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
+                    <option key={engine} value={engine}>
+                      {t(`br.engine.${engine}`, engine)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label={t('set.start')} hint={t('set.start.hint')}>
+                <input
+                  className="input mono"
+                  value={settings.startPage}
+                  onChange={(event) => void save({ startPage: event.target.value })}
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label={t('set.group')} hint={t('set.group.hint')}>
+                <input
+                  className="input"
+                  value={settings.defaultGroup}
+                  onChange={(event) => void save({ defaultGroup: event.target.value })}
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label={t('proxy.password.hint')}>
+                <div className="chip muted" style={{ alignSelf: 'flex-start' }}>
+                  <Icon name="lock" size={12} />
+                  {info?.encryption ?? 'none'}
+                </div>
+              </Field>
             </div>
-            <Toggle
-              label=""
-              checked={settings.extensionsEnabled}
-              onChange={(value) => void save({ extensionsEnabled: value })}
-            />
+
+            <div className="divider" />
+
+            <div className="form-grid">
+              <Toggle
+                checked={settings.extensionsEnabled}
+                onChange={(extensionsEnabled) => void save({ extensionsEnabled })}
+                label={t('set.ext')}
+              />
+              <Toggle
+                checked={settings.customExtensionsEnabled}
+                onChange={(customExtensionsEnabled) => void save({ customExtensionsEnabled })}
+                label={t('set.cext')}
+              />
+              <Toggle
+                checked={settings.historyEnabled}
+                onChange={(historyEnabled) => void save({ historyEnabled })}
+                label={t('set.history')}
+              />
+              <Toggle
+                checked={settings.useTrash}
+                onChange={(useTrash) => void save({ useTrash })}
+                label={t('set.trash')}
+                detail={t('trash.kept.hint')}
+              />
+              <Toggle
+                checked={settings.clearCacheOnExit}
+                onChange={(clearCacheOnExit) => void save({ clearCacheOnExit })}
+                label={t('set.clearonExit')}
+                detail={t('set.clearonExit.hint')}
+              />
+            </div>
           </div>
 
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Start page</div>
-              <div className="list-sub">Where a profile opens when it has no page of its own.</div>
+          <div className="section-label">{t('set.data')}</div>
+          <div className="stat-grid">
+            <Stat value={stats ? bytes(stats.storeBytes) : '—'} label={t('set.stat.store')} />
+            <Stat value={stats ? bytes(stats.profilesBytes) : '—'} label={t('set.stat.profiles')} />
+            <Stat value={stats ? bytes(stats.historyBytes) : '—'} label={t('set.stat.history')} />
+            <Stat value={stats ? bytes(stats.trashBytes) : '—'} label={t('set.stat.trash')} />
+            <Stat value={stats ? bytes(stats.freeBytes) : '—'} label={t('set.stat.free')} />
+          </div>
+
+          <div className="panel" style={{ marginTop: 12 }}>
+            <div className="spread">
+              <div className="grow">
+                <div className="field-label">{t('set.data')}</div>
+                <div className="mono" style={{ fontSize: 11.8, marginTop: 3, overflowWrap: 'anywhere' }}>
+                  {stats?.dataDir ?? info?.dataDir ?? '—'}
+                </div>
+                <div className="hint" style={{ marginTop: 4 }}>{t('set.data.hint')}</div>
+              </div>
+              <div className="cluster">
+                <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
+                  {t('set.data.open')}
+                </Button>
+              </div>
             </div>
-            <input
+
+            {stats ? (
+              <div style={{ marginTop: 14 }}>
+                <Meter
+                  value={Math.min(100, Math.round((100 * stats.storeBytes) / Math.max(1, stats.storeBytes + stats.freeBytes)))}
+                  tone="ok"
+                />
+              </div>
+            ) : null}
+
+            <div className="divider" />
+
+            <div className="spread" style={{ flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontWeight: 580, fontSize: 13 }}>{t('set.clean.now')}</div>
+                <div className="hint">{t('set.clean.body')}</div>
+              </div>
+              <Button
+                variant="soft"
+                icon="archive"
+                busy={busy === 'clean'}
+                onClick={async () => {
+                  const ok = await confirm.ask({
+                    title: t('set.clean.now'),
+                    body: t('set.clean.body'),
+                    confirmLabel: t('btn.clean'),
+                  });
+                  if (!ok) return;
+                  setBusy('clean');
+                  try {
+                    const freed = await bridge().clearAllCaches();
+                    toast.success(t('tools.freed').replace('{size}', bytes(freed)));
+                    setStats(await bridge().getStoreStats());
+                  } catch (error) {
+                    toast.error(t('err.generic'), messageOf(error));
+                  } finally {
+                    setBusy('');
+                  }
+                }}
+              >
+                {t('set.clean.now')}
+              </Button>
+            </div>
+
+            <div className="divider" />
+
+            <div className="spread" style={{ flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontWeight: 580, fontSize: 13, color: 'var(--err)' }}>{t('set.reset')}</div>
+                <div className="hint">{t('set.reset.body')}</div>
+              </div>
+              <Button
+                variant="danger"
+                icon="trash"
+                busy={busy === 'reset'}
+                onClick={async () => {
+                  const ok = await confirm.ask({
+                    title: t('set.reset'),
+                    body: t('set.reset.body'),
+                    confirmLabel: t('set.reset'),
+                    danger: true,
+                  });
+                  if (!ok) return;
+                  setBusy('reset');
+                  try {
+                    await bridge().resetEverything();
+                    await refreshProfiles();
+                    toast.success(t('set.reset'));
+                  } catch (error) {
+                    toast.error(t('err.generic'), messageOf(error));
+                  } finally {
+                    setBusy('');
+                  }
+                }}
+              >
+                {t('set.reset')}
+              </Button>
+            </div>
+          </div>
+
+          <div className="section-label">{t('sec.title')}</div>
+          <SecurityPanel
+            settings={settings}
+            saveSettings={saveSettings}
+            account={account}
+            onAccountChanged={() => void onAccountChanged()}
+          />
+
+          <div className="section-label">{t('tools.logs')}</div>
+          <div className="panel">
+            <div className="panel-head">
+              <Icon name="terminal" size={16} />
+              <h3>{t('rep.log')}</h3>
+              <div className="grow" />
+              <Button size="sm" variant="ghost" icon="refresh" onClick={() => void bridge().readLogTail(200).then(setLogs)}>
+                {t('btn.view')}
+              </Button>
+              <Button size="sm" variant="ghost" icon="folder" onClick={() => void bridge().openLogsDir()}>
+                {t('set.logs.open')}
+              </Button>
+            </div>
+            <pre
               className="input mono"
-              style={{ width: 240 }}
-              defaultValue={settings.startPage}
-              onBlur={(event) => void save({ startPage: event.target.value })}
-            />
-          </div>
-        </div>
-
-        <div className="section-label" style={{ marginBottom: 8 }}>
-          Your data
-        </div>
-        <div className="list" style={{ marginBottom: 16 }}>
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Profile folder</div>
-              <div className="list-sub mono">{info?.dataDir ?? '—'}</div>
-            </div>
-            <button
-              className="btn btn-sm"
-              onClick={() => void bridge().openDataDir?.().catch(() => undefined)}
+              style={{ height: 170, padding: 10, overflow: 'auto', fontSize: 11, lineHeight: 1.55, whiteSpace: 'pre' }}
             >
-              Open folder
-            </button>
+              {logs || `${info?.logFile ?? ''}\n\n${t('btn.view')} …`}
+            </pre>
           </div>
 
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Space used</div>
-              <div className="list-sub">
-                {stats
-                  ? `${bytes(stats.profilesBytes)} of profile data · ${bytes(stats.kernelsBytes)} of browser builds · ${bytes(stats.historyBytes)} of history`
-                  : 'Measuring…'}
-              </div>
-            </div>
-            <span className="chip">{stats ? bytes(stats.storeBytes) : '—'}</span>
-          </div>
+          {info && info.dataMode === 'portable' ? (
+            <Banner tone="ok" icon="check">
+              This is a portable build. Everything lives beside the executable, so the drive can be moved between
+              PCs without leaving anything behind.
+            </Banner>
+          ) : null}
 
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Export profiles</div>
-              <div className="list-sub">
-                One JSON file. Proxy passwords are exported as ciphertext bound to this machine.
-              </div>
-            </div>
-            <button
-              className="btn btn-sm"
-              onClick={async () => {
-                try {
-                  const file = await bridge().exportProfiles();
-                  if (file) toast('success', 'Profiles exported', file);
-                } catch (error) {
-                  toast('error', 'Could not export', messageOf(error));
-                }
-              }}
-            >
-              Export
-            </button>
-          </div>
-
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Import profiles</div>
-              <div className="list-sub">Adds every profile from an exported file.</div>
-            </div>
-            <button
-              className="btn btn-sm"
-              onClick={async () => {
-                try {
-                  const count = await bridge().importProfiles();
-                  if (count > 0) toast('success', `${count} profile${count === 1 ? '' : 's'} imported`);
-                } catch (error) {
-                  toast('error', 'Could not import', messageOf(error));
-                }
-              }}
-            >
-              Import
-            </button>
-          </div>
+          {confirm.dialog}
         </div>
-
-        <div className="section-label" style={{ marginBottom: 8 }}>
-          About
-        </div>
-        <div className="list" style={{ marginBottom: 16 }}>
-          {[
-            ['Version', info?.version ?? '—'],
-            ['Electron', info?.electron ?? '—'],
-            ['Chromium', info?.chrome ?? '—'],
-            ['Platform', info?.platform ?? '—'],
-            ['Profiles', String(info?.profileCount ?? 0)],
-          ].map(([key, value]) => (
-            <div className="list-row" key={key}>
-              <div className="list-main">
-                <div className="list-title">{key}</div>
-              </div>
-              <span className="mono" style={{ color: 'var(--muted)' }}>
-                {value}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <div className="section-label" style={{ marginBottom: 8 }}>
-          Danger zone
-        </div>
-        <div className="list">
-          <div className="list-row">
-            <div className="list-main">
-              <div className="list-title">Reset everything</div>
-              <div className="list-sub">
-                Deletes every profile, its browser data and these settings. Cannot be undone.
-              </div>
-            </div>
-            {confirmReset ? (
-              <>
-                <button className="btn btn-sm" onClick={() => setConfirmReset(false)} disabled={busy}>
-                  Cancel
-                </button>
-                <button className="btn btn-sm btn-danger" onClick={reset} disabled={busy}>
-                  {busy ? <Spinner /> : null} Yes, delete everything
-                </button>
-              </>
-            ) : (
-              <button className="btn btn-sm btn-danger" onClick={() => setConfirmReset(true)}>
-                Reset
-              </button>
-            )}
-          </div>
-        </div>
-
-        <Field label="Note">
-          <span className="hint">
-            Joe Browser makes no network request of its own while you are not using it: no
-            telemetry, no update check, no account. The only outbound traffic is a proxy check you
-            ask for, a build you install, or the browser you open.
-          </span>
-        </Field>
       </div>
     </>
+  );
+}
+
+/** A flag without a flag font: two letters in a box, coloured by country. */
+export function FlagBadge({ code }: { code: string }): ReactNode {
+  const palette: Record<string, [string, string]> = {
+    GB: ['#012169', '#C8102E'],
+    US: ['#3C3B6E', '#B22234'],
+    DE: ['#000000', '#DD0000'],
+    RU: ['#ffffff', '#0039A6'],
+    ES: ['#AA151B', '#F1BF00'],
+    FR: ['#0055A4', '#EF4135'],
+    PT: ['#046A38', '#DA291C'],
+    IT: ['#009246', '#CE2B37'],
+    NL: ['#AE1C28', '#21468B'],
+    PL: ['#ffffff', '#DC143C'],
+    TR: ['#E30A17', '#ffffff'],
+    UA: ['#0057B7', '#FFD700'],
+    SA: ['#006C35', '#ffffff'],
+    CN: ['#DE2910', '#FFDE00'],
+    JP: ['#ffffff', '#BC002D'],
+    KR: ['#ffffff', '#CD2E3A'],
+  };
+  const [bg, accent] = palette[code] ?? ['#4a5260', '#8b93a1'];
+
+  return (
+    <span
+      style={{
+        width: 22,
+        height: 16,
+        borderRadius: 3,
+        background: bg,
+        border: '1px solid rgba(255,255,255,0.18)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 8,
+        fontWeight: 700,
+        letterSpacing: '0.02em',
+        color: accent,
+        boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
+      }}
+      title={code}
+    >
+      {code}
+    </span>
   );
 }
