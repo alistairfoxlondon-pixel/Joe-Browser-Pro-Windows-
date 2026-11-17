@@ -103,6 +103,12 @@ jobs:
       - name: Test the installed Windows application
         run: node scripts/windows-smoke.mjs
 
+      - name: Test live browser and store downloads
+        shell: bash
+        run: |
+          npx esbuild scripts/live-windows-smoke.ts --bundle --platform=node --format=cjs --outfile=live-windows-smoke.cjs
+          node live-windows-smoke.cjs
+
       - name: Upload verification binaries
         if: ${{ inputs.publish != true }}
         uses: actions/upload-artifact@v4
