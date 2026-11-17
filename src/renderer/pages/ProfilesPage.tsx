@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AppSettings, Profile, ProfileSummary, SessionInfo, SortMode } from '../../shared/types';
+import type { AppSettings, Profile, ProfileSummary, ProfileLocation, SessionInfo, SortMode } from '../../shared/types';
 import { SORT_MODES } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
@@ -81,6 +81,31 @@ export function ProfilesPage({
   const [busy, setBusy] = useState<string>('');
   const searchRef = useRef<HTMLDivElement>(null);
 
+  const [locations, setLocations] = useState<Record<string, ProfileLocation>>({});
+  const [locationTick, setLocationTick] = useState(0);
+  const locationInputs = JSON.stringify(profiles.map(({ id, locationKey }) => [id, locationKey]));
+  useEffect(() => {
+    const timer = window.setInterval(() => setLocationTick((tick) => tick + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    const queue = JSON.parse(locationInputs) as [string, string][];
+    const worker = async () => {
+      while (queue.length && !cancelled) {
+        const [id, key] = queue.shift()!;
+        try {
+          const result = await bridge().getProfileLocation(id);
+          if (!cancelled && result.key === key) setLocations((current) => ({ ...current, [id]: result }));
+        } catch {
+          if (!cancelled) setLocations((current) => ({ ...current, [id]: { key, ok: false, country: '', countryCode: '' } }));
+        }
+      }
+    };
+    void Promise.all([worker(), worker(), worker()]);
+    return () => { cancelled = true; };
+  }, [locationInputs, locationTick]);
+
   const density = settings.density;
 
   /* ---------------------------------------------------------------- search + filter */
@@ -135,6 +160,7 @@ export function ProfilesPage({
         profile.timezone,
         profile.proxyLabel,
         profile.proxyCountry,
+        locations[profile.id]?.key === profile.locationKey ? locations[profile.id]?.country : '',
         profile.notes,
         profile.status,
         profile.signature,
@@ -172,7 +198,7 @@ export function ProfilesPage({
     });
 
     return sorted;
-  }, [profiles, filters, settings.sortBy, runningById]);
+  }, [profiles, filters, settings.sortBy, runningById, locations]);
 
   const groups = useMemo(() => {
     if (settings.sortBy !== 'group') return [];
@@ -769,6 +795,7 @@ export function ProfilesPage({
                       <ProfileRow
                         key={profile.id}
                         profile={profile}
+                        location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
                         session={runningById.get(profile.id)}
                         selected={selected.has(profile.id)}
                         onSelect={() => toggleSelection(profile.id)}
@@ -784,6 +811,7 @@ export function ProfilesPage({
                       <ProfileCard
                         key={profile.id}
                         profile={profile}
+                        location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
                         session={runningById.get(profile.id)}
                         selected={selected.has(profile.id)}
                         onSelect={() => toggleSelection(profile.id)}
@@ -802,6 +830,7 @@ export function ProfilesPage({
                 <ProfileRow
                   key={profile.id}
                   profile={profile}
+                  location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
                   session={runningById.get(profile.id)}
                   selected={selected.has(profile.id)}
                   onSelect={() => toggleSelection(profile.id)}
@@ -817,6 +846,7 @@ export function ProfilesPage({
                 <ProfileCard
                   key={profile.id}
                   profile={profile}
+                  location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
                   session={runningById.get(profile.id)}
                   selected={selected.has(profile.id)}
                   onSelect={() => toggleSelection(profile.id)}

@@ -750,3 +750,39 @@ test('editing a proxy endpoint clears stale location while a name edit preserves
   assert.equal(changed.config.lastIp, '');
   assert.equal(changed.lastStatus, 0);
 });
+
+test('profile country lookup uses the configured connection and never falls back to direct', async () => {
+  const { ProfileLocationService } = await import('../src/main/core/profileLocation');
+  let directCount = 0, proxyCount = 0, now = 0;
+  const answer = { ok: true, ip: '1.2.3.4', country: 'United Kingdom', countryCode: 'GB', city: '', timezone: '', latencyMs: 1, error: '' };
+  const service = new ProfileLocationService(async () => { directCount++; return answer; }, async () => { proxyCount++; return { ...answer, country: 'Germany', countryCode: 'DE' }; }, () => now);
+  const direct = store.draftProfile({ name: 'direct' });
+  const proxy = { ...direct, id: 'proxy', proxy: normalizeProxy({ type: 'http', host: 'test.invalid', port: 8080 }) };
+  const results = await Promise.all([service.locate(direct), service.locate(direct), service.locate(proxy)]);
+  assert.equal(results[0]!.country, 'United Kingdom');
+  assert.equal(results[2]!.countryCode, 'DE');
+  assert.equal(directCount, 1);
+  assert.equal(proxyCount, 1);
+  await service.locate(proxy);
+  assert.equal(proxyCount, 1);
+  now = 300_001;
+  await service.locate(proxy);
+  assert.equal(proxyCount, 2);
+  const changed = { ...proxy, proxy: { ...proxy.proxy, host: 'other.invalid' } };
+  assert.notEqual(store.profileLocationKey(proxy), store.profileLocationKey(changed));
+  const failing = new ProfileLocationService(async () => { throw new Error('must not use direct'); }, async () => ({ ...answer, ok: false, country: '', countryCode: '' }));
+  assert.equal((await failing.locate(changed)).ok, false);
+  assert.equal((await failing.locate({ ...changed, proxy: { ...changed.proxy, host: '', port: 0 } })).ok, false);
+});
+
+test('IP lookup response has a timeout after the socket connects', async () => {
+  const net = await import('node:net');
+  const { httpGetOver } = await import('../src/main/core/proxy');
+  const server = net.createServer(socket => { socket.on('data', () => undefined); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as import('node:net').AddressInfo).port;
+  const socket = net.connect(port, '127.0.0.1');
+  await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
+  try { await assert.rejects(httpGetOver(socket, 'example.test', '/', 50), /timed out/); }
+  finally { socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});

@@ -2109,7 +2109,7 @@ p {
   border-color: var(--line-strong);
 }
 
-.lang[aria-selected='true'] {
+.lang[aria-pressed='true'] {
   background: var(--accent-soft);
   border-color: var(--accent-line);
 }
@@ -3050,3 +3050,22 @@ p {
 
 .header-actions { flex: 0 1 auto; justify-content: flex-end; }
 @media (max-width: 760px) { .header-actions { justify-content: flex-start; } }
+
+/* Compact action cards and responsive profile surfaces. */
+.tiles { grid-template-columns: repeat(auto-fill, minmax(min(215px, 100%), 1fr)); gap: 8px; }
+.tile { min-height: 0; padding: 12px; flex-direction: row; align-items: center; gap: 10px; }
+.tile-icon { flex: none; }
+.tile-foot { margin-left: auto; }
+.profile { min-height: 0; }
+.profile .avatar { background: var(--panel-2); border-color: var(--line); border-radius: var(--r); }
+.profile-menu { opacity: 1; }
+.profile-foot { flex-wrap: wrap; }
+.profile-chips .chip { max-width: 100%; }
+.lang-grid { grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); }
+@media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } .row .chip { max-width: 100%; } }
+
+.settings-content .spread { flex-wrap: wrap; gap: 10px; }
+.settings-content .spread > .grow { min-width: 0; overflow-wrap: anywhere; }
+.tools-content .spread { flex-wrap: wrap; gap: 8px; }
+.tools-content .spread .mono { overflow-wrap: anywhere; min-width: 0; }
+.browsers-content .row-title { flex-wrap: wrap; white-space: normal; }

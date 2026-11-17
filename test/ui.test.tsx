@@ -881,3 +881,36 @@ test('diagnostics only sends the exit IP for a risk lookup when requested', asyn
     assert.deepEqual(problems, []);
   } finally { mockBridge.networkReport = originalReport; mockBridge.checkIpRisk = originalRisk; await teardown(); }
 });
+
+test('settings shows the actual circular flag for each available language', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const info = await mockBridge.getAppInfo();
+  await render(hosted(React.createElement(SettingsPage, { settings, info, saveSettings: async () => settings, refreshProfiles: async () => undefined, onSignedOut: () => undefined })));
+  const languages = await mockBridge.listLanguages();
+  assert.equal(container.querySelectorAll('.lang .country-flag').length, languages.length);
+  for (const language of languages) {
+    const button = [...container.querySelectorAll('.lang')].find(el => el.textContent?.includes(language.native));
+    assert.ok(button, language.native);
+    assert.ok(button.querySelector(`.fi-${language.flag.toLowerCase()}`), language.native);
+  }
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
+test('profiles show the detected country flag and the selected browser mark', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const profile = { ...profiles[0]!, engine: 'chrome', locationKey: 'route-a', hasProxy: true };
+  const original = mockBridge.getProfileLocation;
+  mockBridge.getProfileLocation = async () => ({ key: 'route-a', ok: true, country: 'Bangladesh', countryCode: 'BD' });
+  try {
+    await render(hosted(React.createElement(ProfilesPage, { profiles: [profile], runningById: new Map(), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+    const card = container.querySelector('[data-profile-card]')!;
+    assert.ok(card.querySelector('.fi-bd'));
+    assert.ok(card.textContent?.includes('Bangladesh'));
+    assert.ok(card.querySelector('.avatar img[src="./brand/chrome.png"]'));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.getProfileLocation = original; await teardown(); }
+});

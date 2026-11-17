@@ -5,6 +5,7 @@ import { PROXY_TYPES } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
+import { CountryFlag } from '../components/CountryFlag';
 import {
   Banner,
   Button,
@@ -684,11 +685,4 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
       /></>
     </Modal>
   );
-}
-
-function CountryFlag({ code, size = 20 }: { code: string; size?: number }): ReactNode {
-  const normalized = code.toLowerCase();
-  return /^[a-z]{2}$/.test(normalized)
-    ? <span className={`fi fi-${normalized} country-flag`} style={{ width: size, height: size }} aria-label={code.toUpperCase()} role="img" />
-    : <Icon name="globe" size={size} />;
 }

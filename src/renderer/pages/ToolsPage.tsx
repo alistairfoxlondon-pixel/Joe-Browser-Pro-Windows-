@@ -95,7 +95,7 @@ export function ToolsPage({
   const tile = (
     icon: IconName,
     title: string,
-    description: string,
+    _description: string,
     action: () => void,
     busyKey?: string,
     tone?: 'accent' | 'warn' | 'err' | 'ok',
@@ -106,7 +106,6 @@ export function ToolsPage({
       </div>
       <div>
         <div className="tile-title">{title}</div>
-        <div className="tile-desc">{description}</div>
       </div>
       <div className="tile-foot">
         <span className="faint" style={{ fontSize: 11.5 }}>
@@ -157,7 +156,6 @@ export function ToolsPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('tools.title')}</h1>
-          <div className="sub">{t('tools.sub')}</div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
@@ -173,7 +171,7 @@ export function ToolsPage({
       </header>
 
       <div className="content">
-        <div className="content-inner">
+        <div className="content-inner tools-content">
           <div className="section-label">{t('tools.title')}</div>
           <div className="tiles">
             {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true))}
@@ -280,7 +278,7 @@ export function ToolsPage({
             {t('trash.title')}
           </div>
           {trash.length === 0 ? (
-            <EmptyState icon="trash" title={t('trash.empty')} body={t('trash.empty.body')} />
+            <EmptyState icon="trash" title={t('trash.empty')} body="" />
           ) : (
             <div className="rows">
               {trash.map((item) => (

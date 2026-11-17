@@ -3,9 +3,9 @@ import type { AppInfo, AppSettings, KernelBuild, LanguageInfo, StoreStats } from
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
+import { CountryFlag } from '../components/CountryFlag';
 import { SubscriptionCard } from '../components/SubscriptionCard';
 import {
-  Banner,
   Button,
   Field,
   Meter,
@@ -70,14 +70,12 @@ export function SettingsPage({
     [saveSettings, t, toast],
   );
 
-  const current = languages.find((language) => language.key === settings.language);
 
   return (
     <>
       <header className="header">
         <div className="header-titles">
           <h1>{t('header.settings')}</h1>
-          <div className="sub">{t('set.sub')}</div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
@@ -90,7 +88,7 @@ export function SettingsPage({
       </header>
 
       <div className="content">
-        <div className="content-inner">
+        <div className="content-inner settings-content">
           <div className="section-label">{t('set.appearance')}</div>
           <div className="panel">
             <div className="spread" style={{ flexWrap: 'wrap', gap: 20 }}>
@@ -120,7 +118,6 @@ export function SettingsPage({
                     ]}
                   />
                 </div>
-                <div className="hint" style={{ marginTop: 5 }}>{t('set.density.hint')}</div>
               </div>
 
               <div style={{ minWidth: 220, flex: 1 }}>
@@ -135,25 +132,17 @@ export function SettingsPage({
 
           <div className="section-label">{t('set.interface')}</div>
           <div className="panel">
-            <div className="spread" style={{ marginBottom: 10 }}>
-              <Field label={t('set.interface')} hint={t('set.language.hint')}>
-                <div className="faint" style={{ fontSize: 11.8 }}>
-                  {current ? `${current.english} · ${current.coverage}%` : settings.language}
-                </div>
-              </Field>
-            </div>
-
             <div className="lang-grid">
               {languages.map((language) => (
                 <button
                   key={language.key}
                   className="lang"
-                  aria-selected={settings.language === language.key}
+                  aria-pressed={settings.language === language.key}
                   onClick={() => void save({ language: language.key })}
                   type="button"
                 >
                   <span className="flag">
-                    <FlagBadge code={language.flag} />
+                    <CountryFlag code={language.flag} size={22} />
                   </span>
                   <span className="name">
                     {language.native}
@@ -163,7 +152,7 @@ export function SettingsPage({
                       </span>
                     ) : null}
                   </span>
-                  <span className="cov">{language.coverage}%</span>
+                  {language.coverage < 100 ? <span className="cov" title="Translation coverage">{language.coverage}%</span> : null}
                 </button>
               ))}
             </div>
@@ -172,7 +161,7 @@ export function SettingsPage({
           <div className="section-label">{t('set.general')}</div>
           <div className="panel">
             <div className="form-grid">
-              <Field label={t('set.browser')} hint={t('ed.browser.hint')}>
+              <Field label={t('set.browser')}>
                 <select className="select" value={settings.defaultEngine} onChange={(event) => void save({ defaultEngine: event.target.value })}>
                   <option value="auto">{t('ed.engine.system')}</option>
                   {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
@@ -183,7 +172,7 @@ export function SettingsPage({
                 </select>
               </Field>
 
-              <Field label={t('set.kernel')} hint={t('set.kernel.hint')}>
+              <Field label={t('set.kernel')}>
                 {/*
                   The workspace default build. This value existed in the settings model and was
                   read by nothing, so a profile always took whatever the spread chose. Choosing a
@@ -204,7 +193,7 @@ export function SettingsPage({
                 </select>
               </Field>
 
-              <Field label={t('set.start')} hint={t('set.start.hint')}>
+              <Field label={t('set.start')}>
                 <input
                   className="input mono"
                   value={settings.startPage}
@@ -213,7 +202,7 @@ export function SettingsPage({
                 />
               </Field>
 
-              <Field label={t('set.group')} hint={t('set.group.hint')}>
+              <Field label={t('set.group')}>
                 <input
                   className="input"
                   value={settings.defaultGroup}
@@ -222,12 +211,7 @@ export function SettingsPage({
                 />
               </Field>
 
-              <Field label={t('proxy.password.hint')}>
-                <div className="chip muted" style={{ alignSelf: 'flex-start' }}>
-                  <Icon name="lock" size={12} />
-                  {info?.encryption ?? 'none'}
-                </div>
-              </Field>
+
             </div>
 
             <div className="divider" />
@@ -252,13 +236,11 @@ export function SettingsPage({
                 checked={settings.useTrash}
                 onChange={(useTrash) => void save({ useTrash })}
                 label={t('set.trash')}
-                detail={t('trash.kept.hint')}
               />
               <Toggle
                 checked={settings.clearCacheOnExit}
                 onChange={(clearCacheOnExit) => void save({ clearCacheOnExit })}
                 label={t('set.clearonExit')}
-                detail={t('set.clearonExit.hint')}
               />
             </div>
           </div>
@@ -279,7 +261,6 @@ export function SettingsPage({
                 <div className="mono" style={{ fontSize: 11.8, marginTop: 3, overflowWrap: 'anywhere' }}>
                   {stats?.dataDir ?? info?.dataDir ?? '—'}
                 </div>
-                <div className="hint" style={{ marginTop: 4 }}>{t('set.data.hint')}</div>
               </div>
               <div className="cluster">
                 <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
@@ -302,7 +283,6 @@ export function SettingsPage({
             <div className="spread" style={{ flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontWeight: 580, fontSize: 13 }}>{t('set.clean.now')}</div>
-                <div className="hint">{t('set.clean.body')}</div>
               </div>
               <Button
                 variant="soft"
@@ -336,7 +316,6 @@ export function SettingsPage({
             <div className="spread" style={{ flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontWeight: 580, fontSize: 13, color: 'var(--err)' }}>{t('set.reset')}</div>
-                <div className="hint">{t('set.reset.body')}</div>
               </div>
               <Button
                 variant="danger"
@@ -394,62 +373,9 @@ export function SettingsPage({
             </pre>
           </div>
 
-          {info && info.dataMode === 'portable' ? (
-            <Banner tone="ok" icon="check">
-              This is a portable build. Everything lives beside the executable, so the drive can be moved between
-              PCs without leaving anything behind.
-            </Banner>
-          ) : null}
-
           {confirm.dialog}
         </div>
       </div>
     </>
-  );
-}
-
-/** A flag without a flag font: two letters in a box, coloured by country. */
-export function FlagBadge({ code }: { code: string }): ReactNode {
-  const palette: Record<string, [string, string]> = {
-    GB: ['#012169', '#C8102E'],
-    US: ['#3C3B6E', '#B22234'],
-    DE: ['#000000', '#DD0000'],
-    RU: ['#ffffff', '#0039A6'],
-    ES: ['#AA151B', '#F1BF00'],
-    FR: ['#0055A4', '#EF4135'],
-    PT: ['#046A38', '#DA291C'],
-    IT: ['#009246', '#CE2B37'],
-    NL: ['#AE1C28', '#21468B'],
-    PL: ['#ffffff', '#DC143C'],
-    TR: ['#E30A17', '#ffffff'],
-    UA: ['#0057B7', '#FFD700'],
-    SA: ['#006C35', '#ffffff'],
-    CN: ['#DE2910', '#FFDE00'],
-    JP: ['#ffffff', '#BC002D'],
-    KR: ['#ffffff', '#CD2E3A'],
-  };
-  const [bg, accent] = palette[code] ?? ['#4a5260', '#8b93a1'];
-
-  return (
-    <span
-      style={{
-        width: 22,
-        height: 16,
-        borderRadius: 3,
-        background: bg,
-        border: '1px solid rgba(255,255,255,0.18)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: 8,
-        fontWeight: 700,
-        letterSpacing: '0.02em',
-        color: accent,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.35)',
-      }}
-      title={code}
-    >
-      {code}
-    </span>
   );
 }

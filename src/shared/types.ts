@@ -153,6 +153,8 @@ export interface ProfileSummary {
   proxyDetail: string;
   hasProxy: boolean;
   proxyCountry: string;
+  /** Opaque connection fingerprint used to discard outdated location lookups. */
+  locationKey: string;
   lastOpenedAt: string;
   openCount: number;
   createdAt: string;
@@ -230,6 +232,13 @@ export interface ProxyBatchRow {
   country: string;
   latencyMs: number;
   error: string;
+}
+
+export interface ProfileLocation {
+  key: string;
+  country: string;
+  countryCode: string;
+  ok: boolean;
 }
 
 export interface ProxyCheckResult {
@@ -559,6 +568,7 @@ export interface Bridge {
 
   listProfiles(): Promise<ProfileSummary[]>;
   getProfile(id: string): Promise<Profile | null>;
+  getProfileLocation(id: string): Promise<ProfileLocation>;
   /** The stored profile plus a sentence describing anything it shares with the workspace. */
   getProfileRelation(id: string): Promise<{ profile: Profile; relation: string }>;
   draftProfile(input: Partial<Profile>): Promise<Profile>;

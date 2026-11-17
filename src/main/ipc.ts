@@ -1,3 +1,4 @@
+import { ProfileLocationService } from './core/profileLocation';
 import { checkIpRisk } from './core/ipRisk';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
@@ -56,6 +57,7 @@ import {
   sortProfiles,
   summarise,
   updateProfile,
+  proxyPasswordOf,
 } from './core/store';
 import { rollUnique } from './core/fingerprint';
 import {
@@ -207,6 +209,15 @@ export function registerIpc(context: IpcContext): void {
     );
   });
 
+  const profileLocations = new ProfileLocationService(
+    () => testDirect(),
+    (profile) => testProxy(profile.proxy, proxyPasswordOf(profile)),
+  );
+  handle('profiles:location', async (id: string) => {
+    const profile = findProfile(id);
+    if (!profile) throw new Error('That profile no longer exists.');
+    return profileLocations.locate(profile);
+  });
   handle<Profile | null>('profiles:get', (id: string) => findProfile(id));
 
   handle<{ profile: Profile; relation: string }>('profiles:relation', (id: string) => {

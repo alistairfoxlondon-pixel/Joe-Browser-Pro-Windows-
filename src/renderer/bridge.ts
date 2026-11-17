@@ -1,3 +1,4 @@
+import { languagesWithCoverage } from '../shared/i18n';
 import { parseProxyLine } from '../shared/parseProxy';
 import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
 import type {
@@ -259,7 +260,8 @@ function summarise(profile: Profile, running: boolean): ProfileSummary {
     proxyLabel: profile.proxy.type === 'none' ? 'Direct' : `${profile.proxy.host}:${profile.proxy.port}`,
     proxyDetail: profile.proxy.lastCountry,
     hasProxy: profile.proxy.type !== 'none',
-    proxyCountry: profile.proxy.lastCountry,
+    proxyCountry: profile.proxy.lastCountryCode,
+    locationKey: profile.proxy.type === 'none' ? 'direct' : [profile.proxy.type, profile.proxy.host, profile.proxy.port, profile.proxy.user].join(':'),
     lastOpenedAt: profile.lastOpenedAt,
     openCount: profile.openCount,
     createdAt: profile.createdAt,
@@ -357,23 +359,6 @@ const mockHistory: HistoryEntry[] = [
   { profileId: 'mock-2', profileName: 'Ads Manager', at: new Date(Date.now() - 9_100_000).toISOString(), url: 'https://www.facebook.com/login/?next=ads', title: '', how: 'redirect', hop: true },
 ];
 
-const mockLanguages: LanguageInfo[] = [
-  { key: 'en', flag: 'GB', english: 'English', native: 'English', coverage: 100 },
-  { key: 'de', flag: 'DE', english: 'German', native: 'Deutsch', coverage: 62 },
-  { key: 'ru', flag: 'RU', english: 'Russian', native: 'Русский', coverage: 58 },
-  { key: 'es', flag: 'ES', english: 'Spanish', native: 'Español', coverage: 60 },
-  { key: 'fr', flag: 'FR', english: 'French', native: 'Français', coverage: 57 },
-  { key: 'pt', flag: 'PT', english: 'Portuguese', native: 'Português', coverage: 55 },
-  { key: 'it', flag: 'IT', english: 'Italian', native: 'Italiano', coverage: 54 },
-  { key: 'nl', flag: 'NL', english: 'Dutch', native: 'Nederlands', coverage: 52 },
-  { key: 'pl', flag: 'PL', english: 'Polish', native: 'Polski', coverage: 51 },
-  { key: 'tr', flag: 'TR', english: 'Turkish', native: 'Türkçe', coverage: 50 },
-  { key: 'uk', flag: 'UA', english: 'Ukrainian', native: 'Українська', coverage: 49 },
-  { key: 'ar', flag: 'SA', english: 'Arabic', native: 'العربية', coverage: 46 },
-  { key: 'zh', flag: 'CN', english: 'Chinese', native: '中文', coverage: 48 },
-  { key: 'ja', flag: 'JP', english: 'Japanese', native: '日本語', coverage: 47 },
-  { key: 'ko', flag: 'KR', english: 'Korean', native: '한국어', coverage: 45 },
-];
 
 const mockRemovedShipped = new Set<string>();
 const mockExtensions: ExtensionItem[] = [];
@@ -595,6 +580,14 @@ export const mockBridge: Bridge = {
 
   async listProfiles(): Promise<ProfileSummary[]> {
     return mockProfiles.map((profile, index) => summarise(profile, index < 2));
+  },
+
+  async getProfileLocation(id: string) {
+    const profile = mockProfiles.find((item) => item.id === id);
+    if (!profile) throw new Error('Profile not found');
+    const summary = summarise(profile, false);
+    const direct = profile.proxy.type === 'none';
+    return { key: summary.locationKey, ok: direct || !!profile.proxy.lastCountryCode, country: direct ? 'United Kingdom' : profile.proxy.lastCountry, countryCode: direct ? 'GB' : profile.proxy.lastCountryCode };
   },
 
   async getProfile(id: string): Promise<Profile | null> {
@@ -1218,7 +1211,7 @@ export const mockBridge: Bridge = {
   },
 
   async listLanguages(): Promise<LanguageInfo[]> {
-    return mockLanguages.map((language) => ({ ...language }));
+    return languagesWithCoverage();
   },
 
   /* ---------------------------------------------------------------- window */

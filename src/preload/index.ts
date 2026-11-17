@@ -26,6 +26,7 @@ const bridge = {
   /* ---------------------------------------------------------------- profiles */
   listProfiles: () => invoke('profiles:list'),
   getProfile: (id: string) => invoke('profiles:get', id),
+  getProfileLocation: (id: string) => invoke('profiles:location', id),
   getProfileRelation: (id: string) => invoke('profiles:relation', id),
   draftProfile: (input: unknown) => invoke('profiles:draft', input),
   createProfile: (input: unknown) => invoke('profiles:create', input),

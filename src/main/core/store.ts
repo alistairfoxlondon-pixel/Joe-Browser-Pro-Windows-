@@ -452,6 +452,13 @@ export function alignProfileWithProxy(id: string): Profile {
   });
 }
 
+/** Changes when the configured route or its credentials change; never exposes credentials. */
+export function profileLocationKey(profile: Profile): string {
+  const p = profile.proxy;
+  if (p.type === 'none') return 'direct';
+  return crypto.createHash('sha256').update(JSON.stringify([p.type, p.host, p.port, p.user, p.passwordEnc])).digest('hex');
+}
+
 export function summarise(profile: Profile, running: boolean, all?: Profile[]): ProfileSummary {
   const accent = ACCENTS[Math.abs(hash(profile.id)) % ACCENTS.length]!;
   const comparison = all && all.length > 1
@@ -469,7 +476,8 @@ export function summarise(profile: Profile, running: boolean, all?: Profile[]): 
     browserVersion: profile.browserVersion,
     proxyLabel: proxyLabel(profile.proxy),
     proxyDetail: proxyDetail(profile.proxy),
-    hasProxy: proxyEnabled(profile.proxy),
+    hasProxy: profile.proxy.type !== 'none',
+    locationKey: profileLocationKey(profile),
     proxyCountry: profile.proxy.lastCountryCode,
     lastOpenedAt: profile.lastOpenedAt,
     openCount: profile.openCount,

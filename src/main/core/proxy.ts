@@ -317,14 +317,17 @@ function httpConnect(
 }
 
 /** A tiny HTTP/1.1 GET over an existing socket, enough for the IP echo endpoint. */
-function httpGetOver(socket: net.Socket, host: string, pathName: string): Promise<string> {
+export function httpGetOver(socket: net.Socket, host: string, pathName: string, timeoutMs = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
+    const timer = setTimeout(() => { cleanup(); socket.destroy(); reject(new Error('The check endpoint timed out.')); }, timeoutMs);
     const cleanup = () => {
+      clearTimeout(timer);
       socket.removeListener('data', onData);
-      socket.removeListener('error', reject);
+      socket.removeListener('error', onError);
       socket.removeListener('close', onClose);
     };
+    const onError = (error: Error) => { cleanup(); reject(error); };
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length > 262144) {
@@ -339,7 +342,7 @@ function httpGetOver(socket: net.Socket, host: string, pathName: string): Promis
     };
 
     socket.on('data', onData);
-    socket.on('error', reject);
+    socket.on('error', onError);
     socket.on('close', onClose);
 
     socket.write(
@@ -428,7 +431,7 @@ export async function testProxy(
   let socket: net.Socket | null = null;
   try {
     socket = await openTunnel(upstreamOf(config, password), CHECK_HOST, 80, timeoutMs);
-    const raw = await httpGetOver(socket, CHECK_HOST, CHECK_PATH);
+    const raw = await httpGetOver(socket, CHECK_HOST, CHECK_PATH, timeoutMs);
     const echo = parseEcho(bodyOf(raw));
     if (!echo.ip) throw new Error('The check endpoint answered without an address.');
     return {
@@ -461,7 +464,7 @@ export async function testDirect(timeoutMs = 15000): Promise<ProxyCheckResult> {
       socket!.once('error', (e) => reject(e));
     });
     socket.setTimeout(0);
-    const raw = await httpGetOver(socket, CHECK_HOST, CHECK_PATH);
+    const raw = await httpGetOver(socket, CHECK_HOST, CHECK_PATH, timeoutMs);
     return { ok: true, ...parseEcho(bodyOf(raw)), latencyMs: Date.now() - started, error: '' };
   } catch (error) {
     return {

@@ -4,7 +4,7 @@ import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
 import { BrowserLogo } from '../components/BrowserLogo';
-import { Banner, Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
+import { Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
 
 /**
@@ -125,9 +125,6 @@ export function BrowsersPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('br.title')}</h1>
-          <div className="sub">
-            {browsers.length} detected (informational) · {installed.length} downloaded builds
-          </div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="refresh" onClick={() => void load()}>
@@ -137,13 +134,13 @@ export function BrowsersPage({
       </header>
 
       <div className="content">
-        <div className="content-inner">
+        <div className="content-inner browsers-content">
           <div className="section-label">{t('br.detected')}</div>
           {browsers.length === 0 && !loading ? (
             <EmptyState
               icon="browsers"
               title={t('br.none')}
-              body="No system browsers detected. Profiles use app-managed builds downloaded below."
+              body=""
               action={
                 <Button variant="primary" icon="refresh" onClick={() => void load()}>
                   {t('btn.detect')}
@@ -183,7 +180,7 @@ export function BrowsersPage({
 
           <div className="section-label">{t('br.kernels')}</div>
           {installed.length === 0 ? (
-            <EmptyState icon="download" title={t('br.kernel.empty')} body={t('br.kernel.empty.body')} />
+            <EmptyState icon="download" title={t('br.kernel.empty')} body="" />
           ) : (
             <div className="rows">
               {installed.map((kernel) => (
@@ -272,7 +269,6 @@ export function BrowsersPage({
                   {system?.gpuRenderer || settings.machineGlRenderer || <span className="faint">not read yet</span>}
                 </div>
               </div>
-              <div className="hint">{t('br.gpu.hint')}</div>
 
               <div className="divider" />
               <div className="stat-grid">
@@ -290,7 +286,7 @@ export function BrowsersPage({
 
           <div className="section-label">{t('set.browser')}</div>
           <div className="panel">
-            <Field label={t('set.browser')} hint={t('ed.browser.hint')}>
+            <Field label={t('set.browser')}>
               <select
                 className="select"
                 value={settings.defaultEngine}
@@ -312,12 +308,7 @@ export function BrowsersPage({
             />
           </div>
 
-          {settings.machineGlRenderer ? (
-            <Banner tone="ok" icon="check">
-              Profiles can use the card this PC actually has. The editor's “{t('ed.fp.useThis')}” button fills it
-              in per profile, and the value is kept here as the default.
-            </Banner>
-          ) : null}
+
         </div>
       </div>
 
