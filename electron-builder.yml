@@ -31,7 +31,11 @@ win:
 nsis:
   oneClick: false
   perMachine: false
+  allowElevation: true
   allowToChangeInstallationDirectory: true
+  license: LICENSE
+  runAfterFinish: true
+  displayLanguageSelector: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Joe Browser

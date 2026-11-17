@@ -96,6 +96,9 @@ jobs:
           done
           ls -la release
 
+      - name: Test the installed Windows application
+        run: node scripts/windows-smoke.mjs
+
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:

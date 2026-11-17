@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as childProcess from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 
 /**
  * Contract tests over the source tree itself.
@@ -374,4 +375,30 @@ test('no setting is declared and then never read', () => {
 
   const dead = fields.filter((field) => !new RegExp(`\\b${field}\\b`).test(body));
   assert.deepEqual(dead, [], `settings nothing reads: ${dead.join(', ')}`);
+});
+
+
+test('the built preload exposes every Bridge method on the actual joe object', () => {
+  const exposed: Record<string, Record<string, (...args: unknown[]) => unknown>> = {};
+  const subscriptions = new Map<string, (...args: unknown[]) => void>();
+  const electron = {
+    contextBridge: { exposeInMainWorld: (name: string, api: typeof exposed[string]) => { exposed[name] = api; } },
+    ipcRenderer: {
+      invoke: async () => undefined,
+      on: (channel: string, callback: (...args: unknown[]) => void) => subscriptions.set(channel, callback),
+      removeListener: (channel: string) => subscriptions.delete(channel),
+    },
+  };
+  runInNewContext(read('dist/preload/index.js'), {
+    require: (name: string) => { assert.equal(name, 'electron'); return electron; },
+  });
+  for (const method of bridgeMethods()) {
+    assert.equal(typeof exposed.joe?.[method], 'function', `window.joe.${method} is missing at runtime`);
+  }
+  let received: unknown;
+  const off = exposed.joe!.on!('extensions:changed', (payload: unknown) => { received = payload; }) as () => void;
+  subscriptions.get('extensions:changed')!({}, 'changed');
+  assert.equal(received, 'changed');
+  off();
+  assert.equal(subscriptions.size, 0);
 });

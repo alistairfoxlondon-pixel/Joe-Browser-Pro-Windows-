@@ -56,6 +56,7 @@ const NAV: NavEntry[] = [
 ];
 
 export function App(): ReactNode {
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const [page, setPage] = useState<Page>('profiles');
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -88,6 +89,8 @@ export function App(): ReactNode {
   // blank the page the user is looking at.
   useEffect(() => {
     let live = true;
+    setLoading(true);
+    setFailure('');
     void (async () => {
       try {
         const [nextSettings, nextInfo, nextLock] = await Promise.all([
@@ -120,7 +123,7 @@ export function App(): ReactNode {
     return () => {
       live = false;
     };
-  }, []);
+  }, [startupAttempt]);
 
   // Every main-process change that matters to the list arrives on one of these channels.
   useEffect(() => {
@@ -275,10 +278,10 @@ export function App(): ReactNode {
             <TitleBar page={page} running={running} />
             {failure ? (
               <div style={{ padding: '12px 26px 0' }}>
-                <FailureBanner message={failure} onRetry={() => void refresh()} />
+                <FailureBanner message={failure} onRetry={() => setStartupAttempt((value) => value + 1)} />
               </div>
             ) : null}
-            {loading || !settings ? (
+            {failure && !settings ? null : loading || !settings ? (
               <div className="content">
                 <div className="empty">
                   <span className="spinner" style={{ width: 22, height: 22, color: 'var(--accent)' }} />
