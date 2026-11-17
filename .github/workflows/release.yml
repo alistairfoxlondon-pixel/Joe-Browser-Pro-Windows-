@@ -106,8 +106,18 @@ jobs:
       - name: Test live browser and store downloads
         shell: bash
         run: |
+          set -o pipefail
           npx esbuild scripts/live-windows-smoke.ts --bundle --platform=node --format=cjs --outfile=live-windows-smoke.cjs
-          node live-windows-smoke.cjs
+          node live-windows-smoke.cjs 2>&1 | tee live-smoke-output.txt
+
+      - name: Report live test failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f live-smoke-output.txt ]; then
+            detail=$(tail -30 live-smoke-output.txt | tr '\n' '|' | cut -c1-6000)
+            echo "::error title=LIVE TEST OUTPUT::$detail"
+          fi
 
       - name: Upload verification binaries
         if: ${{ inputs.publish != true }}
