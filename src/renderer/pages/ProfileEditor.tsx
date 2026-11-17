@@ -1,156 +1,253 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type {
-  DesktopOs,
-  ExtensionReport,
+  AppSettings,
+  DetectedBrowser,
+  FingerprintConfig,
+  KernelBuild,
   Profile,
   ProfileSummary,
-  ProxyCheckResult,
-  ProxyType,
+  ProxyConfig,
+  ProxyEntry,
+  ToolConfig,
+} from '../../shared/types';
+import {
+  DEVICE_TARGETS,
+  FONT_SETS,
+  GEO_MODES,
+  HUMAN_PASTE_SPEEDS,
+  PROXY_TYPES,
+  WEBRTC_MODES,
 } from '../../shared/types';
 import { bridge } from '../bridge';
-import { Field, Modal, Spinner, Toggle } from '../components/UI';
+import { useI18n } from '../i18n';
+import {
+  Banner,
+  Button,
+  Chip,
+  Field,
+  Modal,
+  Segmented,
+  Toggle,
+  useConfirm,
+  useToast,
+} from '../components/UI';
 import { messageOf } from '../util';
 
-type Tab = 'general' | 'identity' | 'proxy' | 'tools';
+/**
+ * The profile editor.
+ *
+ * Five tabs, in the order a profile is actually built: who it is, what machine it claims to be,
+ * what it hides, where it connects from, and which tools run inside it. Every field the original
+ * exposed is here, plus the ones that make the fingerprint tab usable at scale - a live clash
+ * warning, a one-click re-roll, a random identity, and "use this PC's graphics card".
+ *
+ * The form is a single draft object. Nothing is written until Save, so a mis-click is free, and
+ * Cancel from a dirty form asks first rather than silently throwing work away.
+ */
 
-interface Props {
-  profile: ProfileSummary | null;
-  onClose(): void;
-  onSaved(name: string): void | Promise<void>;
-  toast(kind: 'info' | 'success' | 'warn' | 'error', title: string, detail?: string): void;
-}
+type Tab = 'general' | 'fingerprint' | 'privacy' | 'proxy' | 'tools';
 
-const SCREENS: [number, number][] = [
-  [1920, 1080],
-  [2560, 1440],
-  [1366, 768],
-  [1536, 864],
-  [1440, 900],
-  [3840, 2160],
-  [1680, 1050],
-  [1280, 720],
+const TABS: { id: Tab; key: string }[] = [
+  { id: 'general', key: 'tab.general' },
+  { id: 'fingerprint', key: 'tab.fingerprint' },
+  { id: 'privacy', key: 'tab.privacy' },
+  { id: 'proxy', key: 'tab.proxy' },
+  { id: 'tools', key: 'tab.tools' },
 ];
 
-export function ProfileEditor({ profile, onClose, onSaved, toast }: Props) {
+export function ProfileEditor({
+  profile,
+  onClose,
+  onSaved,
+  settings,
+  existing,
+  toast: _toast,
+}: {
+  profile: Profile | null;
+  onClose: () => void;
+  onSaved: () => void;
+  settings: AppSettings;
+  existing: ProfileSummary[];
+  toast: ReturnType<typeof useToast>;
+}): ReactNode {
+  const { t } = useI18n();
+  const toast = useToast();
+  const confirm = useConfirm();
+
   const [tab, setTab] = useState<Tab>('general');
-  const [draft, setDraft] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(Boolean(profile));
+  const [draft, setDraft] = useState<Profile | null>(profile);
+  const [browsers, setBrowsers] = useState<DetectedBrowser[]>([]);
+  const [kernels, setKernels] = useState<KernelBuild[]>([]);
+  const [proxies, setProxies] = useState<ProxyEntry[]>([]);
   const [saving, setSaving] = useState(false);
-  const [secret, setSecret] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newEngine, setNewEngine] = useState('chrome');
   const [checking, setChecking] = useState(false);
-  const [check, setCheck] = useState<ProxyCheckResult | null>(null);
-  const [extensions, setExtensions] = useState<ExtensionReport | null>(null);
+  const [checkResult, setCheckResult] = useState('');
+  const [learning, setLearning] = useState(false);
+  const [clash, setClash] = useState('');
+  const [dirty, setDirty] = useState(false);
 
+  const isNew = !profile;
+
+  // A new profile starts as a real draft, not a form full of blanks: the shell asks for a
+  // default identity and the editor edits that.
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      if (!profile) {
-        // A brand-new profile: the store fills the identity in, so this is only the shell of
-        // one. Asking the app for a preview of the identity keeps the form honest.
-        setLoading(false);
-        return;
-      }
-      try {
-        const full = await bridge().getProfile(profile.id);
-        if (!cancelled && full) setDraft(full);
-        const report = await bridge().listExtensions(profile.id);
-        if (!cancelled) setExtensions(report);
-      } catch (error) {
-        toast('error', 'Could not open that profile', messageOf(error));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [profile, toast]);
-
-  if (profile && loading) {
-    return (
-      <Modal title="Loading profile" onClose={onClose}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: 'var(--muted)' }}>
-          <Spinner /> Reading the stored identity…
-        </div>
-      </Modal>
-    );
-  }
-
-  const fp = draft?.fingerprint;
-  const proxy = draft?.proxy;
-  const tools = draft?.tools;
-
-  function patch(next: Partial<Profile>) {
-    setDraft((current) => (current ? { ...current, ...next } : current));
-  }
-
-  function patchFingerprint(next: Partial<NonNullable<typeof fp>>) {
-    setDraft((current) =>
-      current ? { ...current, fingerprint: { ...current.fingerprint, ...next } } : current,
-    );
-  }
-
-  function patchProxy(next: Partial<NonNullable<typeof proxy>>) {
-    setDraft((current) => (current ? { ...current, proxy: { ...current.proxy, ...next } } : current));
-  }
-
-  function patchTools(next: Partial<NonNullable<typeof tools>>) {
-    setDraft((current) => (current ? { ...current, tools: { ...current.tools, ...next } } : current));
-  }
-
-  async function save() {
-    if (!profile && !newName.trim()) {
-      toast('warn', 'Give the profile a name', 'The name is how you will find it in the list.');
-      setTab('general');
+    let live = true;
+    if (profile) {
+      setDraft(profile);
       return;
     }
+    void (async () => {
+      try {
+        const created = await bridge().createProfile({ name: nextName(existing), group: settings.defaultGroup });
+        if (live) {
+          setDraft(created);
+          // The record exists so the fingerprint can be rolled against the workspace; naming it
+          // "Profile 7" the moment it is saved is not a change the user made.
+          setDirty(true);
+        }
+      } catch (error) {
+        if (live) toast.error(t('err.generic'), messageOf(error));
+      }
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  useEffect(() => {
+    void (async () => {
+      const [nextBrowsers, nextKernels, nextProxies] = await Promise.all([
+        bridge().detectInstalledBrowsers().catch(() => []),
+        bridge().listKernels().catch(() => []),
+        bridge().listProxies().catch(() => []),
+      ]);
+      setBrowsers(nextBrowsers);
+      setKernels(nextKernels.filter((kernel) => kernel.installed));
+      setProxies(nextProxies);
+    })();
+  }, []);
+
+  const patch = useCallback((change: Partial<Profile>) => {
+    setDraft((current) => (current ? { ...current, ...change } : current));
+    setDirty(true);
+  }, []);
+
+  const patchFingerprint = useCallback((change: Partial<FingerprintConfig>) => {
+    setDraft((current) =>
+      current ? { ...current, fingerprint: { ...current.fingerprint, ...change } } : current,
+    );
+    setDirty(true);
+  }, []);
+
+  const patchProxy = useCallback((change: Partial<ProxyConfig>) => {
+    setDraft((current) => (current ? { ...current, proxy: { ...current.proxy, ...change } } : current));
+    setDirty(true);
+  }, []);
+
+  const patchTools = useCallback((change: Partial<ToolConfig>) => {
+    setDraft((current) => (current ? { ...current, tools: { ...current.tools, ...change } } : current));
+    setDirty(true);
+  }, []);
+
+  /* ---------------------------------------------------------------- derivative state */
+
+  const deviceSummary = useMemo(() => {
+    const fp = draft?.fingerprint;
+    if (!fp) return '';
+    return `${fp.screenW}×${fp.screenH} @${fp.pixelRatio}x · ${fp.cores} cores · ${fp.memory} GB`;
+  }, [draft]);
+
+  const firefoxWarning = draft?.engine === 'firefox';
+
+  const close = useCallback(async () => {
+    if (dirty) {
+      const ok = await confirm.ask({
+        title: t('ed.discard'),
+        body: t('ed.discard.body'),
+        confirmLabel: t('ed.discard.confirm'),
+        danger: true,
+      });
+      if (!ok) return;
+      // A draft that was never saved must not become a profile: roll it back.
+      if (isNew && draft) {
+        await bridge().deleteProfile(draft.id).catch(() => undefined);
+      }
+    }
+    onClose();
+  }, [confirm, dirty, isNew, draft, onClose, t]);
+
+  const save = async () => {
+    if (!draft) return;
     setSaving(true);
     try {
-      const payload: Partial<Profile> = draft
-        ? {
-            name: draft.name,
-            group: draft.group,
-            tags: draft.tags,
-            startUrl: draft.startUrl,
-            engine: draft.engine,
-            kernelId: draft.kernelId,
-            fingerprint: draft.fingerprint,
-            proxy: { ...draft.proxy, password: secret || undefined },
-            tools: draft.tools,
-          }
-        : {
-            name: newName.trim(),
-            engine: newEngine,
-          };
-
-      if (profile) {
-        await bridge().updateProfile(profile.id, payload);
+      if (isNew) {
+        await bridge().createProfile(draft);
       } else {
-        await bridge().createProfile(payload);
+        await bridge().updateProfile(draft.id, draft);
       }
-
-      await onSaved((payload.name as string) || 'Profile');
+      toast.success(t('btn.save'), draft.name);
+      onSaved();
     } catch (error) {
-      toast('error', 'Could not save the profile', messageOf(error));
+      toast.error(t('err.save'), messageOf(error));
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  async function testProxy() {
-    if (!proxy) return;
-    setChecking(true);
-    setCheck(null);
+  /* ---------------------------------------------------------------- actions */
+
+  const reroll = async () => {
+    if (!draft) return;
     try {
-      const result = await bridge().checkProxy(proxy, secret || undefined);
-      setCheck(result);
+      const rolled = await bridge().rerollFingerprint(draft.id);
+      setDraft({ ...rolled, name: draft.name, notes: draft.notes, group: draft.group, tags: draft.tags, proxy: draft.proxy, tools: draft.tools });
+      setDirty(true);
+      setClash('');
+      toast.success(t('ed.fp.new'), rolled.fingerprint.timezone);
+    } catch (error) {
+      toast.error(t('err.generic'), messageOf(error));
+    }
+  };
+
+  const randomise = async () => {
+    if (!draft) return;
+    try {
+      const rolled = await bridge().randomIdentity(draft.id);
+      setDraft({ ...rolled, name: draft.name, notes: draft.notes, group: draft.group, tags: draft.tags, proxy: draft.proxy, tools: draft.tools });
+      setDirty(true);
+      setClash('');
+      toast.success(t('ed.fp.random'), rolled.fingerprint.os);
+    } catch (error) {
+      toast.error(t('err.generic'), messageOf(error));
+    }
+  };
+
+  const useThisPc = async () => {
+    setLearning(true);
+    try {
+      const gpu = await bridge().learnMachineGpu();
+      patchFingerprint({ webGlVendor: gpu.vendor, webGlRenderer: gpu.renderer });
+      toast.success(t('br.gpu.done'), gpu.renderer);
+    } catch (error) {
+      toast.error(t('br.gpu'), messageOf(error));
+    } finally {
+      setLearning(false);
+    }
+  };
+
+  const checkProxy = async () => {
+    if (!draft) return;
+    setChecking(true);
+    setCheckResult('');
+    try {
+      const result = await bridge().checkProxy(draft.proxy, draft.proxy.password);
       if (result.ok) {
+        const line = t('ed.proxy.ok')
+          .replace('{ip}', result.ip)
+          .replace('{country}', result.country)
+          .replace('{latency}', String(result.latencyMs));
+        setCheckResult(line);
         patchProxy({
           lastIp: result.ip,
           lastCountry: result.country,
@@ -158,462 +255,677 @@ export function ProfileEditor({ profile, onClose, onSaved, toast }: Props) {
           lastCity: result.city,
           lastTimezone: result.timezone,
         });
-        // The whole point of matching: clock and locale follow the exit country.
-        if (draft?.fingerprint.autoMatchProxy && result.countryCode) {
-          patchFingerprint({ timezone: result.timezone || draft.fingerprint.timezone });
-        }
+      } else {
+        setCheckResult(t('ed.proxy.fail').replace('{host}', draft.proxy.host).replace('{port}', String(draft.proxy.port)));
       }
     } catch (error) {
-      setCheck({
-        ok: false,
-        ip: '',
-        country: '',
-        countryCode: '',
-        city: '',
-        timezone: '',
-        latencyMs: 0,
-        error: messageOf(error),
-      });
+      setCheckResult(messageOf(error));
     } finally {
       setChecking(false);
     }
+  };
+
+  const checkClash = useCallback(async () => {
+    if (!draft) return;
+    try {
+      const { relation } = await bridge().getProfileRelation(draft.id);
+      if (relation && /shar/i.test(relation)) {
+        const match = /([A-Z][^.]*)/.exec(relation);
+        setClash(match ? match[1]!.trim() : relation);
+      } else {
+        setClash('');
+      }
+    } catch {
+      setClash('');
+    }
+  }, [draft]);
+
+  useEffect(() => {
+    const id = setTimeout(() => void checkClash(), 350);
+    return () => clearTimeout(id);
+  }, [checkClash, draft?.fingerprint.seed, draft?.fingerprint.screenW, draft?.fingerprint.webGlRenderer]);
+
+  if (!draft) {
+    return (
+      <Modal title={t('ed.new')} onClose={close} width="wide">
+        <div className="empty">
+          <span className="spinner" style={{ width: 20, height: 20, color: 'var(--accent)' }} />
+        </div>
+      </Modal>
+    );
   }
+
+  const fp = draft.fingerprint;
 
   return (
     <Modal
-      title={profile ? `Edit ${profile.name}` : 'New profile'}
+      title={isNew ? t('ed.new') : t('ed.edit')}
       subtitle={
-        profile
-          ? 'Changes are saved to this profile only; other profiles keep their own identity.'
-          : 'Four things are asked for up front. Everything else has a sensible default you can change later.'
+        isNew
+          ? t('ed.sub.new')
+          : t('ed.sub.edit').replace('{name}', draft.name).replace('{signature}', draft.browserVersion)
       }
-      onClose={onClose}
-      width={720}
+      onClose={close}
+      width="wide"
+      flush
       footer={
         <>
-          <button className="btn" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? <Spinner /> : null}
-            {profile ? 'Save changes' : 'Create profile'}
-          </button>
+          <span className="chip muted" title={t('card.signature')}>
+            {deviceSummary}
+          </span>
+          <div className="spacer" />
+          <Button variant="ghost" onClick={close}>
+            {t('btn.cancel')}
+          </Button>
+          <Button variant="primary" icon="save" onClick={save} busy={saving}>
+            {t('btn.save')}
+          </Button>
         </>
       }
     >
-      <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
-        {(
-          [
-            ['general', 'General'],
-            ['identity', 'Identity'],
-            ['proxy', 'Proxy'],
-            ['tools', 'Tools'],
-          ] as [Tab, string][]
-        ).map(([id, label]) => (
+      <div className="editor-tabs" role="tablist">
+        {TABS.map((entry) => (
           <button
-            key={id}
-            className={`btn btn-sm ${tab === id ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setTab(id)}
-            disabled={!profile && id !== 'general'}
+            key={entry.id}
+            className="editor-tab"
+            role="tab"
+            aria-selected={tab === entry.id}
+            onClick={() => setTab(entry.id)}
+            type="button"
           >
-            {label}
+            {t(entry.key)}
           </button>
         ))}
       </div>
 
-      {!profile ? (
-        <>
-          <Field label="Name" hint="A new identity is generated when the profile is created, unique against every profile you already have.">
-            <input
-              className="input"
-              autoFocus
-              value={newName}
-              placeholder="e.g. Shop UK"
-              onChange={(event) => setNewName(event.target.value)}
-            />
-          </Field>
-          <Field label="Engine" hint="Which browser family this profile runs. A build can be pinned later.">
-            <select
-              className="select"
-              value={newEngine}
-              onChange={(event) => setNewEngine(event.target.value)}
-            >
-              <option value="chrome">Google Chrome</option>
-              <option value="chromium">Chromium</option>
-              <option value="edge">Microsoft Edge</option>
-              <option value="brave">Brave</option>
-              <option value="firefox">Firefox</option>
-            </select>
-          </Field>
-        </>
-      ) : null}
+      <div style={{ padding: '18px 20px' }}>
+        {tab === 'general' ? (
+          <div className="stack">
+            <div className="form-grid">
+              <Field label={t('ed.name')} hint={t('ed.name.hint')} span={2}>
+                <input
+                  className="input"
+                  value={draft.name}
+                  onChange={(event) => patch({ name: event.target.value })}
+                  autoFocus
+                  spellCheck={false}
+                />
+              </Field>
 
-      {draft && tab === 'general' ? (
-        <>
-          <Field label="Name" hint="The only thing that identifies this profile in the list.">
-            <input
-              className="input"
-              value={draft.name}
-              autoFocus
-              onChange={(event) => patch({ name: event.target.value })}
-            />
-          </Field>
-          <div className="row">
-            <Field label="Group" hint="Free text. Used for the filter above the list.">
-              <input
-                className="input"
-                value={draft.group}
-                placeholder="e.g. E-commerce"
-                onChange={(event) => patch({ group: event.target.value })}
-              />
-            </Field>
-            <Field label="Tags" hint="Comma separated.">
-              <input
-                className="input"
-                value={draft.tags.join(', ')}
-                placeholder="fb, ads"
-                onChange={(event) =>
-                  patch({
-                    tags: event.target.value
-                      .split(',')
-                      .map((tag) => tag.trim())
-                      .filter(Boolean)
-                      .slice(0, 12),
-                  })
-                }
-              />
-            </Field>
-          </div>
-          <div className="row">
-            <Field label="Engine" hint="Which browser family this profile runs.">
-              <select
-                className="select"
-                value={draft.engine}
-                onChange={(event) => patch({ engine: event.target.value })}
-              >
-                <option value="chrome">Google Chrome</option>
-                <option value="chromium">Chromium</option>
-                <option value="edge">Microsoft Edge</option>
-                <option value="brave">Brave</option>
-                <option value="firefox">Firefox</option>
-              </select>
-            </Field>
-            <Field label="Pinned build" hint="Optional. Empty follows the newest build on this PC.">
-              <input
-                className="input mono"
-                value={draft.kernelId}
-                placeholder="chrome-157.0.8103.41-stable"
-                onChange={(event) => patch({ kernelId: event.target.value })}
-              />
-            </Field>
-          </div>
-          <Field label="Start page" hint="Opened when the profile launches.">
-            <input
-              className="input"
-              value={draft.startUrl}
-              placeholder="about:blank"
-              onChange={(event) => patch({ startUrl: event.target.value })}
-            />
-          </Field>
-        </>
-      ) : null}
-
-      {draft && tab === 'identity' && fp ? (
-        <>
-          <div className="section-label">Machine</div>
-          <div className="row">
-            <Field label="Operating system" hint="What the profile claims to be.">
-              <select
-                className="select"
-                value={fp.os}
-                onChange={(event) => patchFingerprint({ os: event.target.value as DesktopOs })}
-              >
-                {['Windows 11', 'Windows 10', 'macOS 15', 'macOS 14', 'Linux'].map((os) => (
-                  <option key={os} value={os}>
-                    {os}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Screen" hint="Width × height, and the height after the taskbar.">
-              <select
-                className="select"
-                value={`${fp.screenW}x${fp.screenH}`}
-                onChange={(event) => {
-                  const [w, h] = event.target.value.split('x').map(Number);
-                  patchFingerprint({ screenW: w!, screenH: h!, availW: w!, availH: (h ?? 0) - 40 });
-                }}
-              >
-                {SCREENS.map(([w, h]) => (
-                  <option key={`${w}x${h}`} value={`${w}x${h}`}>
-                    {w} × {h}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <div className="row-3">
-            <Field label="Time zone" hint="IANA name. Must agree with the proxy’s country.">
-              <input
-                className="input mono"
-                value={fp.timezone}
-                onChange={(event) => patchFingerprint({ timezone: event.target.value })}
-              />
-            </Field>
-            <Field label="CPU cores">
-              <input
-                className="input"
-                type="number"
-                min={2}
-                max={32}
-                value={fp.cores}
-                onChange={(event) => patchFingerprint({ cores: Number(event.target.value) || 4 })}
-              />
-            </Field>
-            <Field label="Memory (GB)">
-              <input
-                className="input"
-                type="number"
-                min={2}
-                max={8}
-                value={fp.memory}
-                onChange={(event) => patchFingerprint({ memory: Number(event.target.value) || 8 })}
-              />
-            </Field>
-          </div>
-
-          <Field label="Graphics card" hint="Read-only: the adapter this PC actually has.">
-            <input className="input mono" value={fp.webGlRenderer} readOnly />
-          </Field>
-
-          <div className="section-label">Noise</div>
-          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            <Toggle
-              label="Canvas"
-              checked={fp.canvasNoise}
-              onChange={(value) => patchFingerprint({ canvasNoise: value })}
-            />
-            <Toggle
-              label="Audio"
-              checked={fp.audioNoise}
-              onChange={(value) => patchFingerprint({ audioNoise: value })}
-            />
-            <Toggle
-              label="Fonts"
-              checked={fp.fontsNoise}
-              onChange={(value) => patchFingerprint({ fontsNoise: value })}
-            />
-            <Toggle
-              label="Timing jitter"
-              checked={fp.hardwareNoise}
-              onChange={(value) => patchFingerprint({ hardwareNoise: value })}
-            />
-          </div>
-
-          <div className="row">
-            <Field label="WebRTC" hint="off removes the interface; proxy keeps host addresses off the wire.">
-              <select
-                className="select"
-                value={fp.webRtcMode}
-                onChange={(event) => patchFingerprint({ webRtcMode: event.target.value })}
-              >
-                <option value="proxy">Proxy only</option>
-                <option value="public">Public address only</option>
-                <option value="off">Disabled</option>
-              </select>
-            </Field>
-            <Field label="Seed" hint="The identity is a pure function of this number.">
-              <div style={{ display: 'flex', gap: 8 }}>
+              <Field label={t('ed.start')} hint={t('ed.start.hint')} span={2}>
                 <input
                   className="input mono"
-                  value={fp.seed}
-                  onChange={(event) => patchFingerprint({ seed: Number(event.target.value) || 1 })}
+                  value={draft.startUrl}
+                  onChange={(event) => patch({ startUrl: event.target.value })}
+                  placeholder={settings.startPage}
+                  spellCheck={false}
                 />
-                <button
-                  className="btn"
-                  onClick={() => patchFingerprint({ seed: Math.floor(Math.random() * 4294967295) })}
+              </Field>
+
+              <Field label={t('ed.group')} hint={t('ed.group.hint')}>
+                <input
+                  className="input"
+                  value={draft.group}
+                  onChange={(event) => patch({ group: event.target.value })}
+                  list="joe-groups"
+                  spellCheck={false}
+                />
+                <datalist id="joe-groups">
+                  {[...new Set(existing.map((entry) => entry.group).filter(Boolean))].map((group) => (
+                    <option key={group} value={group} />
+                  ))}
+                </datalist>
+              </Field>
+
+              <Field label={t('ed.tags')} hint={t('ed.tags.hint')}>
+                <input
+                  className="input"
+                  value={draft.tags.join(', ')}
+                  onChange={(event) =>
+                    patch({
+                      tags: event.target.value
+                        .split(',')
+                        .map((tag) => tag.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label={t('ed.browser')} hint={t('ed.browser.hint')} span={2}>
+                <select
+                  className="select"
+                  value={draft.kernelId ? `kernel:${draft.kernelId}` : draft.engine}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value.startsWith('kernel:')) {
+                      const kernelId = value.slice(7);
+                      const kernel = kernels.find((entry) => entry.id === kernelId);
+                      patch({ kernelId, engine: kernel?.engine ?? draft.engine, browserVersion: kernel?.version ?? draft.browserVersion });
+                    } else {
+                      patch({ kernelId: '', engine: value });
+                    }
+                  }}
                 >
-                  Re-roll
-                </button>
-              </div>
-            </Field>
-          </div>
-        </>
-      ) : null}
+                  <option value="auto">{t('ed.engine.system')}</option>
+                  {browsers.map((browser) => (
+                    <option key={browser.engine} value={browser.engine}>
+                      {browser.name} {browser.version}
+                    </option>
+                  ))}
+                  {kernels.length > 0 ? (
+                    <optgroup label={t('br.kernels')}>
+                      {kernels.map((kernel) => (
+                        <option key={kernel.id} value={`kernel:${kernel.id}`}>
+                          {kernel.engine} {kernel.version}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  <option value="custom">{t('ed.engine.custom')}</option>
+                </select>
+              </Field>
 
-      {draft && tab === 'proxy' && proxy ? (
-        <>
-          <div className="row">
-            <Field label="Type">
-              <select
-                className="select"
-                value={proxy.type}
-                onChange={(event) => patchProxy({ type: event.target.value as ProxyType })}
-              >
-                <option value="none">Direct (no proxy)</option>
-                <option value="http">HTTP</option>
-                <option value="https">HTTPS</option>
-                <option value="socks5">SOCKS5</option>
-              </select>
-            </Field>
-            <Field label="Port">
-              <input
-                className="input"
-                type="number"
-                value={proxy.port || ''}
-                onChange={(event) => patchProxy({ port: Number(event.target.value) || 0 })}
-              />
-            </Field>
-          </div>
-
-          <Field label="Host">
-            <input
-              className="input mono"
-              value={proxy.host}
-              placeholder="185.21.4.14"
-              onChange={(event) => patchProxy({ host: event.target.value })}
-            />
-          </Field>
-
-          <div className="row">
-            <Field label="Username">
-              <input
-                className="input"
-                value={proxy.user}
-                onChange={(event) => patchProxy({ user: event.target.value })}
-              />
-            </Field>
-            <Field label="Password" hint="Sent through the local relay, never on a command line.">
-              <input
-                className="input"
-                type="password"
-                value={secret}
-                placeholder={proxy.passwordEnc ? '•••••••• (stored)' : 'not set'}
-                onChange={(event) => setSecret(event.target.value)}
-              />
-            </Field>
-          </div>
-
-          <Toggle
-            label="Keep the session alive on a direct connection if the proxy stops answering"
-            checked={proxy.fallbackDirect}
-            onChange={(value) => patchProxy({ fallbackDirect: value })}
-          />
-          <Toggle
-            label="Match the clock and language to the proxy’s country"
-            checked={fp?.autoMatchProxy ?? true}
-            onChange={(value) => patchFingerprint({ autoMatchProxy: value })}
-          />
-
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button className="btn" onClick={testProxy} disabled={checking || proxy.type === 'none'}>
-              {checking ? <Spinner /> : null}
-              {checking ? 'Checking' : 'Test proxy'}
-            </button>
-            {check ? (
-              <span className={`chip ${check.ok ? 'ok' : 'warn'}`}>
-                {check.ok
-                  ? `${check.ip} · ${check.city || check.country} · ${check.latencyMs} ms`
-                  : check.error}
-              </span>
-            ) : null}
-          </div>
-        </>
-      ) : null}
-
-      {draft && tab === 'tools' && tools ? (
-        <>
-          <Toggle
-            label="Paste as human — Ctrl+V types the clipboard out character by character"
-            checked={tools.humanPaste}
-            onChange={(value) => patchTools({ humanPaste: value })}
-          />
-          <Field label="Typing speed">
-            <select
-              className="select"
-              value={tools.humanPasteSpeed}
-              onChange={(event) => patchTools({ humanPasteSpeed: event.target.value })}
-            >
-              <option value="relaxed">Relaxed</option>
-              <option value="natural">Natural</option>
-              <option value="fast">Fast</option>
-              <option value="instant">Instant</option>
-            </select>
-          </Field>
-
-          <div className="divider" />
-
-          <Toggle
-            label="Restore the right-click menu on pages that block it"
-            checked={tools.enableRightClick}
-            onChange={(value) => patchTools({ enableRightClick: value })}
-          />
-          <Toggle
-            label="Unlock text selection and copy"
-            checked={tools.unlockSelection}
-            onChange={(value) => patchTools({ unlockSelection: value })}
-          />
-
-          <div className="divider" />
-
-          <Toggle
-            label="Watch the exit address and warn when it rotates or drops"
-            checked={tools.proxyWatch}
-            onChange={(value) => patchTools({ proxyWatch: value })}
-          />
-          <Field label="Check every (seconds)">
-            <input
-              className="input"
-              type="number"
-              min={30}
-              max={600}
-              value={tools.proxyWatchInterval}
-              onChange={(event) =>
-                patchTools({ proxyWatchInterval: Math.min(600, Math.max(30, Number(event.target.value) || 60)) })
-              }
-            />
-          </Field>
-
-          <div>
-            <div className="section-label" style={{ marginBottom: 8 }}>
-              Built in, written by the app
-            </div>
-            <div className="list">
-              {(extensions?.firstParty ?? []).map((extension) => (
-                <div className="list-row" key={extension.id}>
-                  <div className="list-main">
-                    <div className="list-title">{extension.name}</div>
-                    <div className="list-sub">{extension.description}</div>
-                  </div>
-                  <span className={`chip ${extension.enabled ? 'ok' : ''}`}>
-                    {extension.enabled ? 'loaded' : 'off'}
-                  </span>
-                </div>
-              ))}
-              {extensions && extensions.firstParty.length === 0 ? (
-                <div className="list-row">
-                  <div className="list-main">
-                    <div className="list-sub">Extensions are switched off in Settings.</div>
-                  </div>
-                </div>
+              {draft.engine === 'custom' ? (
+                <Field label={t('ed.engine.path')} span={2}>
+                  <input
+                    className="input mono"
+                    value={draft.browserPath}
+                    onChange={(event) => patch({ browserPath: event.target.value })}
+                    placeholder="C:\\Program Files\\…\\chrome.exe"
+                    spellCheck={false}
+                  />
+                </Field>
               ) : null}
+
+              <Field label={t('ed.status')} hint={t('ed.status.hint')}>
+                <input
+                  className="input"
+                  value={draft.status}
+                  onChange={(event) => patch({ status: event.target.value })}
+                  list="joe-statuses"
+                  placeholder="idle"
+                  spellCheck={false}
+                />
+                <datalist id="joe-statuses">
+                  <option value="new" />
+                  <option value="warm" />
+                  <option value="idle" />
+                  <option value="banned" />
+                </datalist>
+              </Field>
+
+              <Field label={t('ed.notes')} hint={t('ed.notes.hint')}>
+                <input
+                  className="input"
+                  value={draft.notes}
+                  onChange={(event) => patch({ notes: event.target.value })}
+                />
+              </Field>
+
+              <div className="span-all divider" />
+
+              <div className="span-all">
+                <Toggle
+                  checked={draft.freshSession}
+                  onChange={(freshSession) => patch({ freshSession })}
+                  label={t('ed.fresh')}
+                  detail={t('ed.fresh.hint')}
+                />
+              </div>
             </div>
           </div>
+        ) : null}
 
-          <Field
-            label="Extra unpacked extensions"
-            hint="One absolute folder path per line."
-          >
-            <textarea
-              className="input"
-              rows={3}
-              value={tools.customExtensions}
-              onChange={(event) => patchTools({ customExtensions: event.target.value })}
-            />
-          </Field>
-        </>
-      ) : null}
+        {tab === 'fingerprint' ? (
+          <div className="stack">
+            <div className="spread">
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {t('ed.fp.sub')}
+              </span>
+              <div className="cluster">
+                <Button size="sm" icon="refresh" onClick={reroll}>
+                  {t('ed.fp.new')}
+                </Button>
+                <Button size="sm" variant="soft" icon="sparkle" onClick={randomise}>
+                  {t('ed.fp.random')}
+                </Button>
+                <Button size="sm" variant="ghost" icon="cpu" onClick={useThisPc} busy={learning}>
+                  {t('ed.fp.useThis')}
+                </Button>
+              </div>
+            </div>
+
+            {clash ? (
+              <Banner tone="warn" icon="link">
+                <b>{t('ed.fp.clash').replace('{name}', clash)}</b>
+                <div style={{ marginTop: 3 }}>{t('ed.fp.clash.body')}</div>
+              </Banner>
+            ) : (
+              <Banner tone="ok" icon="shield">
+                {t('ed.fp.unique').replace('{n}', String(existing.length))}
+              </Banner>
+            )}
+
+            {firefoxWarning ? (
+              <Banner tone="warn" icon="warning">
+                <b>{t('ed.fp.firefox')}</b>
+                <div style={{ marginTop: 3 }}>{t('ed.fp.firefox.body')}</div>
+              </Banner>
+            ) : null}
+
+            <div className="section-label">{t('ed.fp.locale.sub')}</div>
+            <div className="form-grid three">
+              <Field label={t('ed.os')}>
+                <select
+                  className="select"
+                  value={fp.os}
+                  onChange={(event) => patchFingerprint({ os: event.target.value as FingerprintConfig['os'] })}
+                >
+                  {DEVICE_TARGETS.map((target) => (
+                    <option key={target} value={target}>
+                      {target}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label={t('ed.screen')} hint={t('ed.fp.screen.hint')}>
+                <div className="row-inline">
+                  <input
+                    className="input num"
+                    type="number"
+                    value={fp.screenW}
+                    onChange={(event) => patchFingerprint({ screenW: Number(event.target.value) || fp.screenW, availW: Number(event.target.value) || fp.availW })}
+                  />
+                  <span className="faint">×</span>
+                  <input
+                    className="input num"
+                    type="number"
+                    value={fp.screenH}
+                    onChange={(event) => patchFingerprint({ screenH: Number(event.target.value) || fp.screenH, availH: Math.max(0, (Number(event.target.value) || fp.screenH) - 40) })}
+                  />
+                </div>
+              </Field>
+
+              <Field label={t('ed.timezone')}>
+                <input
+                  className="input"
+                  value={fp.timezone}
+                  onChange={(event) => patchFingerprint({ timezone: event.target.value })}
+                  list="joe-timezones"
+                  spellCheck={false}
+                />
+                <datalist id="joe-timezones">
+                  {Intl.supportedValuesOf('timeZone').map((zone) => (
+                    <option key={zone} value={zone} />
+                  ))}
+                </datalist>
+              </Field>
+
+              <Field label={t('ed.language')}>
+                <input
+                  className="input"
+                  value={fp.language}
+                  onChange={(event) => patchFingerprint({ language: event.target.value, acceptLanguage: `${event.target.value},en;q=0.9` })}
+                  placeholder="en-US"
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label={t('ed.cores')}>
+                <input
+                  className="input num"
+                  type="number"
+                  min={1}
+                  max={64}
+                  value={fp.cores}
+                  onChange={(event) => patchFingerprint({ cores: Number(event.target.value) || fp.cores })}
+                />
+              </Field>
+
+              <Field label={t('ed.memory')}>
+                <select
+                  className="select"
+                  value={fp.memory}
+                  onChange={(event) => patchFingerprint({ memory: Number(event.target.value) })}
+                >
+                  {[2, 4, 8, 16, 32, 64].map((gb) => (
+                    <option key={gb} value={gb}>
+                      {gb} GB
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div className="section-label">{t('ed.fp.hardware.sub')}</div>
+            <div className="form-grid">
+              <Field label={t('ed.gpu')} hint={fp.webGlVendor} span={2}>
+                <input
+                  className="input mono"
+                  value={fp.webGlRenderer}
+                  onChange={(event) => patchFingerprint({ webGlRenderer: event.target.value })}
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label={t('ed.fp.fonts.set')}>
+                <select
+                  className="select"
+                  value={fp.fontSet}
+                  onChange={(event) => patchFingerprint({ fontSet: event.target.value })}
+                >
+                  {FONT_SETS.map((set) => (
+                    <option key={set.id} value={set.id}>
+                      {set.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label={fp.os === 'Android' ? t('ed.fp.android') : t('ed.fp.ios')}>
+                <input
+                  className="input"
+                  value={fp.os === 'Android' ? fp.androidVersion : fp.iosVersion}
+                  onChange={(event) =>
+                    patchFingerprint(
+                      fp.os === 'Android'
+                        ? { androidVersion: event.target.value }
+                        : { iosVersion: event.target.value },
+                    )
+                  }
+                  placeholder="auto"
+                  spellCheck={false}
+                />
+              </Field>
+
+              <Field label={t('ed.ua')} hint={t('ed.fp.ua.hint')} span={2}>
+                <input
+                  className="input mono"
+                  value={fp.userAgentOverride}
+                  onChange={(event) => patchFingerprint({ userAgentOverride: event.target.value })}
+                  placeholder="auto"
+                  spellCheck={false}
+                />
+              </Field>
+            </div>
+
+            <div className="section-label">{t('ed.fp.surfaces.sub')}</div>
+            <div className="form-grid">
+              <Toggle checked={fp.canvasNoise} onChange={(canvasNoise) => patchFingerprint({ canvasNoise })} label={t('ed.canvas')} />
+              <Toggle checked={fp.audioNoise} onChange={(audioNoise) => patchFingerprint({ audioNoise })} label={t('ed.audio')} />
+              <Toggle checked={fp.fontsNoise} onChange={(fontsNoise) => patchFingerprint({ fontsNoise })} label={t('ed.fonts')} />
+              <Toggle checked={fp.hardwareNoise} onChange={(hardwareNoise) => patchFingerprint({ hardwareNoise })} label={t('ed.fp.hardwareNoise')} detail={t('ed.fp.hardwareNoise.hint')} />
+              <Toggle checked={fp.spoofBattery} onChange={(spoofBattery) => patchFingerprint({ spoofBattery })} label={t('ed.battery')} />
+              <Toggle checked={fp.spoofMac} onChange={(spoofMac) => patchFingerprint({ spoofMac })} label={t('ed.fp.mac')} />
+              <Toggle checked={fp.doNotTrack} onChange={(doNotTrack) => patchFingerprint({ doNotTrack })} label={t('ed.dnt')} />
+              <Toggle checked={fp.autoUserAgent} onChange={(autoUserAgent) => patchFingerprint({ autoUserAgent })} label={t('ed.ua')} />
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'privacy' ? (
+          <div className="stack">
+            <div className="section-label">{t('ed.webrtc')}</div>
+            <div className="form-grid">
+              <Field label={t('ed.webrtc')} hint="What an ICE candidate may reveal." span={2}>
+                <Segmented
+                  value={fp.webRtcMode}
+                  onChange={(webRtcMode) => patchFingerprint({ webRtcMode, webRtcProtect: webRtcMode !== 'off' })}
+                  options={WEBRTC_MODES.map((mode) => ({ id: mode.id, label: mode.label }))}
+                />
+              </Field>
+
+              <Field label={t('ed.geo')} span={2}>
+                <Segmented
+                  value={fp.geoMode}
+                  onChange={(geoMode) => patchFingerprint({ geoMode: geoMode as FingerprintConfig['geoMode'] })}
+                  options={GEO_MODES.map((mode) => ({ id: mode.id, label: mode.label }))}
+                />
+              </Field>
+
+              {fp.geoMode === 'custom' ? (
+                <>
+                  <Field label="Latitude">
+                    <input className="input mono" value={fp.geoLat} onChange={(event) => patchFingerprint({ geoLat: event.target.value })} placeholder="51.5074" />
+                  </Field>
+                  <Field label="Longitude">
+                    <input className="input mono" value={fp.geoLng} onChange={(event) => patchFingerprint({ geoLng: event.target.value })} placeholder="-0.1278" />
+                  </Field>
+                </>
+              ) : null}
+
+              <div className="span-all">
+                <Toggle
+                  checked={fp.autoMatchProxy}
+                  onChange={(autoMatchProxy) => patchFingerprint({ autoMatchProxy })}
+                  label={t('ed.automatch')}
+                  detail={t('ed.proxy.match')}
+                />
+              </div>
+            </div>
+
+            <div className="section-label">{t('ed.webrtc')}</div>
+            <Banner tone="info" icon="shield">
+              The clock, language and coordinates follow the connection when “{t('ed.automatch')}” is on.
+              With it off the profile keeps the values on the fingerprint tab, and a site comparing the
+              two will notice a mismatch.
+            </Banner>
+          </div>
+        ) : null}
+
+        {tab === 'proxy' ? (
+          <div className="stack">
+            <div className="spread">
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {t('ed.proxy.sub')}
+              </span>
+              <div className="cluster">
+                {proxies.length > 0 ? (
+                  <select
+                    className="select"
+                    style={{ width: 200 }}
+                    value=""
+                    onChange={(event) => {
+                      const entry = proxies.find((row) => row.id === event.target.value);
+                      if (!entry) return;
+                      patchProxy({ ...entry.config, password: entry.password });
+                    }}
+                  >
+                    <option value="">{t('ed.proxy.from')}</option>
+                    {proxies.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.name || `${entry.config.host}:${entry.config.port}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                <Button size="sm" variant="soft" icon="speed" onClick={checkProxy} busy={checking}>
+                  {t('ed.proxy.check')}
+                </Button>
+              </div>
+            </div>
+
+            {checkResult ? (
+              <Banner tone={/^\d/.test(checkResult) ? 'ok' : 'err'}>{checkResult}</Banner>
+            ) : null}
+
+            <div className="form-grid">
+              <Field label={t('ed.ptype')}>
+                <Segmented
+                  value={draft.proxy.type}
+                  onChange={(type) =>
+                    patchProxy({
+                      type,
+                      fallbackDirect: type === 'none' ? false : draft.proxy.fallbackDirect,
+                    })
+                  }
+                  options={PROXY_TYPES.map((type) => ({ id: type, label: type === 'none' ? t('generic.off') : type.toUpperCase() }))}
+                />
+              </Field>
+
+              <div />
+
+              {draft.proxy.type === 'none' ? (
+                <div className="span-all">
+                  <Banner tone="info" icon="globe">
+                    <b>{t('ed.proxy.none')}</b>
+                    <div style={{ marginTop: 3 }}>{t('ed.proxy.none.hint')}</div>
+                  </Banner>
+                </div>
+              ) : (
+                <>
+                  <Field label={t('ed.host')}>
+                    <input
+                      className="input mono"
+                      value={draft.proxy.host}
+                      onChange={(event) => patchProxy({ host: event.target.value })}
+                      placeholder="gate.example.com"
+                      spellCheck={false}
+                    />
+                  </Field>
+
+                  <Field label={t('ed.port')}>
+                    <input
+                      className="input mono num"
+                      type="number"
+                      value={draft.proxy.port || ''}
+                      onChange={(event) => patchProxy({ port: Number(event.target.value) || 0 })}
+                      placeholder="8080"
+                    />
+                  </Field>
+
+                  <Field label={t('ed.user')}>
+                    <input
+                      className="input mono"
+                      value={draft.proxy.user}
+                      onChange={(event) => patchProxy({ user: event.target.value })}
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </Field>
+
+                  <Field label={t('ed.pass')} hint={t('proxy.password.hint')}>
+                    <input
+                      className="input mono"
+                      type="password"
+                      value={draft.proxy.password ?? ''}
+                      onChange={(event) => patchProxy({ password: event.target.value })}
+                      autoComplete="new-password"
+                    />
+                  </Field>
+
+                  <div className="span-all">
+                    <Toggle
+                      checked={draft.proxy.fallbackDirect}
+                      onChange={(fallbackDirect) => patchProxy({ fallbackDirect })}
+                      label="Fall back to a direct connection"
+                      detail="Keeps the session usable when the proxy stops answering, at the cost of revealing this PC's address."
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'tools' ? (
+          <div className="stack">
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              {t('ed.tools.sub')}
+            </span>
+
+            <div className="form-grid">
+              <Toggle
+                checked={draft.tools.humanPaste}
+                onChange={(humanPaste) => patchTools({ humanPaste })}
+                label={t('ed.humanpaste')}
+              />
+              <Field label={t('ed.humanspeed')}>
+                <select
+                  className="select"
+                  value={draft.tools.humanPasteSpeed}
+                  onChange={(event) => patchTools({ humanPasteSpeed: event.target.value })}
+                  disabled={!draft.tools.humanPaste}
+                >
+                  {HUMAN_PASTE_SPEEDS.map((speed) => (
+                    <option key={speed} value={speed}>
+                      {speed}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Toggle
+                checked={draft.tools.enableRightClick}
+                onChange={(enableRightClick) => patchTools({ enableRightClick })}
+                label={t('ed.rightclick')}
+              />
+              <Toggle
+                checked={draft.tools.unlockSelection}
+                onChange={(unlockSelection) => patchTools({ unlockSelection })}
+                label="Unlock text selection"
+              />
+
+              <Toggle
+                checked={draft.tools.proxyWatch}
+                onChange={(proxyWatch) => patchTools({ proxyWatch })}
+                label={t('ed.proxywatch')}
+                detail={t('ed.proxy.watch.hint')}
+              />
+              <Field label={t('ed.watchinterval')}>
+                <select
+                  className="select"
+                  value={draft.tools.proxyWatchInterval}
+                  onChange={(event) => patchTools({ proxyWatchInterval: Number(event.target.value) })}
+                  disabled={!draft.tools.proxyWatch}
+                >
+                  {[1, 5, 10, 15, 30, 60].map((minutes) => (
+                    <option key={minutes} value={minutes}>
+                      {minutes} min
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label={t('ed.customext')} hint={t('ed.tools.customext.hint')} span="all">
+                <textarea
+                  className="textarea mono"
+                  value={draft.tools.customExtensions}
+                  onChange={(event) => patchTools({ customExtensions: event.target.value })}
+                  placeholder={'C:\\extensions\\ublock\nC:\\extensions\\cookie-editor'}
+                  spellCheck={false}
+                  rows={4}
+                />
+              </Field>
+            </div>
+
+            <div className="section-label">{t('ed.ext')}</div>
+            <div className="cluster">
+              <Chip tone="accent" icon="extensions">
+                {t('ext.firstparty')}
+              </Chip>
+              <span className="faint" style={{ fontSize: 12 }}>
+                {settings.extensionsEnabled ? t('generic.on') : t('generic.off')}
+              </span>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {confirm.dialog}
     </Modal>
   );
+}
+
+/** Profile 1, Profile 2 … skipping the names already taken. */
+function nextName(existing: ProfileSummary[]): string {
+  const taken = new Set(existing.map((profile) => profile.name.toLowerCase()));
+  for (let index = 1; index < 10000; index++) {
+    const candidate = `Profile ${index}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `Profile ${Date.now()}`;
 }

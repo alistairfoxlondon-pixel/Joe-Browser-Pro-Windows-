@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import type { SessionInfo } from '../../shared/types';
+import type { CookieRecord, SessionInfo } from '../../shared/types';
 import type { Profile } from '../../shared/types';
 import { Paths } from './paths';
 import { CdpClient, delay } from './cdp';
@@ -11,7 +11,9 @@ import { buildFingerprintScript } from './inject';
 import { openTunnel, proxyEnabled, upstreamOf, type Upstream } from './proxy';
 import { startRelay, type RelayHandle } from './relay';
 import { proxyPasswordOf, findProfile, getSettings } from './store';
-import { extensionArgs, extensionDirectories, installFirefoxExtensions } from './extensions';
+import { installFirefoxExtensions } from './extensions';
+import { loadArgs, profileExtensionFolders } from './library';
+import { log } from './log';
 import { testProxy } from './proxy';
 import * as history from './history';
 import { resolveKernelExe, detectInstalledBrowsers } from './catalog';
@@ -74,6 +76,7 @@ export class BrowserSession extends EventEmitter {
       startedAt: new Date().toISOString(),
       exitIp: '',
       lastError: '',
+      proxyFellBack: false,
     };
   }
 
@@ -93,8 +96,7 @@ export class BrowserSession extends EventEmitter {
     const identity = buildIdentity(
       engine,
       target.version || profile.browserVersion,
-      profile.fingerprint.os,
-      profile.fingerprint.deviceType,
+      profile.fingerprint,
       profile.fingerprint.seed,
     );
 
@@ -142,8 +144,11 @@ export class BrowserSession extends EventEmitter {
 
     // The extensions are written on every launch, so a folder the user deleted comes back and a
     // store build that could not be fetched never leaves the tools missing.
-    const masterEnabled = getSettings().extensionsEnabled;
-    const extensions = isFirefox ? [] : extensionDirectories(profile, masterEnabled);
+    const settings = getSettings();
+    const masterEnabled = settings.extensionsEnabled;
+    const extensions = isFirefox
+      ? []
+      : profileExtensionFolders(profile, masterEnabled, settings.customExtensionsEnabled);
 
     const args = isFirefox
       ? this.firefoxArgs(profile, proxyArg, startUrl)
@@ -171,6 +176,7 @@ export class BrowserSession extends EventEmitter {
     });
 
     this.child = child;
+    log.info(`launched ${profile.name} with ${path.basename(target.exe)} ${this.info.browserVersion}`);
     this.info.pid = child.pid ?? 0;
     this.info.engine = engine;
     this.info.browserVersion = target.version || profile.browserVersion;
@@ -232,7 +238,7 @@ export class BrowserSession extends EventEmitter {
       args.push('--proxy-bypass-list=<-loopback>');
     }
 
-    args.push(...extensionArgs(extensions));
+    args.push(...loadArgs(extensions));
 
     const url = startUrl || profile.startUrl || 'about:blank';
     args.push(url);
@@ -374,8 +380,15 @@ export class BrowserSession extends EventEmitter {
           sessionId,
         );
       } else {
-        // A worker has no Page domain; the same source still runs as a plain evaluation.
+        /* A worker has no Page domain, so the script cannot be installed "on new document".
+           What works is running it at the top of the worker: auto-attach pauses the worker
+           before its first line, so an evaluate here lands before any page script can read
+           navigator inside it. The injected source is written against `window`, so the worker
+           gets a `self` binding for the two globals it actually needs. */
         await this.cdp.send('Runtime.enable', {}, sessionId).catch(() => undefined);
+        const workerScript =
+          'var window = self; var document = undefined; try {\n' + this.injectScript + '\n} catch (e) {}';
+        await this.cdp.send('Runtime.evaluate', { expression: workerScript, awaitPromise: false }, sessionId).catch(() => undefined);
       }
       void engine;
     } catch {
@@ -493,6 +506,179 @@ export class BrowserSession extends EventEmitter {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /** Evaluate an expression in the profile's own session, as the original's EvaluateAsync did. */
+  async evaluate(expression: string): Promise<string> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    const page = await this.primaryPageSession();
+    const result = await this.cdp.send<{ result?: { value?: unknown; description?: string } }>(
+      'Runtime.evaluate',
+      { expression, returnByValue: true, awaitPromise: true },
+      page,
+    );
+    const value = result.result?.value;
+    if (value === undefined) return result.result?.description ?? '';
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+
+  /** Type into the focused element of the active page. */
+  async typeText(text: string): Promise<void> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    const page = await this.primaryPageSession();
+    for (const character of text) {
+      await this.cdp.send('Input.dispatchKeyEvent', { type: 'char', text: character }, page);
+      await delay(12 + Math.floor(Math.random() * 40));
+    }
+  }
+
+  /** Navigate the active tab rather than opening a new one. */
+  async navigate(url: string): Promise<void> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    const page = await this.primaryPageSession();
+    await this.cdp.send('Page.navigate', { url }, page);
+  }
+
+  /** A PNG screenshot of the active tab, base64 encoded. */
+  async screenshot(): Promise<string> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    const page = await this.primaryPageSession();
+    const shot = await this.cdp.send<{ data?: string }>('Page.captureScreenshot', { format: 'png' }, page);
+    return shot.data ?? '';
+  }
+
+  /** Bring the browser's own window to the front. */
+  focus(): void {
+    if (!this.cdp) return;
+    void this.cdp.send('Target.activateTarget', { targetId: this.lastTargetId }).catch(() => undefined);
+  }
+
+  private lastTargetId = '';
+  private pageSession = '';
+
+  /** The session id of the first page target, attached on demand. */
+  private async primaryPageSession(): Promise<string> {
+    if (this.pageSession) return this.pageSession;
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+
+    const targets = await this.cdp.send<{ targetInfos?: { targetId: string; type: string }[] }>('Target.getTargets');
+    const page = (targets.targetInfos ?? []).find((t) => t.type === 'page');
+    if (!page) throw new Error('The profile has no page open yet. Open a tab and try again.');
+
+    const attached = await this.cdp.send<{ sessionId: string }>('Target.attachToTarget', {
+      targetId: page.targetId,
+      flatten: true,
+    });
+    this.lastTargetId = page.targetId;
+    this.pageSession = attached.sessionId;
+    await this.cdp.send('Page.enable', {}, this.pageSession).catch(() => undefined);
+    await this.cdp.send('Runtime.enable', {}, this.pageSession).catch(() => undefined);
+    await this.cdp.send('Network.enable', {}, this.pageSession).catch(() => undefined);
+    this.stamped.add(this.pageSession);
+    return this.pageSession;
+  }
+
+  /**
+   * Export every cookie the profile holds, in a shape the original's cookie manager used and
+   * a cookie editor can read.
+   */
+  async exportCookies(): Promise<CookieRecord[]> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    const page = await this.primaryPageSession();
+    const response = await this.cdp.send<{ cookies?: CookieRecord[] }>('Network.getAllCookies', {}, page);
+    return response.cookies ?? [];
+  }
+
+  /** Write cookies back into the profile's own session. */
+  async importCookies(cookies: CookieRecord[]): Promise<number> {
+    if (!this.cdp) throw new Error('This profile is not reachable over DevTools yet.');
+    const page = await this.primaryPageSession();
+    let written = 0;
+    for (const cookie of cookies) {
+      try {
+        const params: Record<string, unknown> = {
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path || '/',
+          secure: Boolean(cookie.secure),
+          httpOnly: Boolean(cookie.httpOnly),
+        };
+        if (cookie.expires && cookie.expires > 0) params['expires'] = cookie.expires;
+        await this.cdp.send('Network.setCookie', params, page);
+        written++;
+      } catch {
+        /* a cookie the browser refuses is skipped, not fatal for the rest */
+      }
+    }
+    return written;
+  }
+
+  /**
+   * Read the live fingerprint out of the running page. This is the difference between the
+   * original's audit and a claim-vs-claim table: every value here is what a site actually sees.
+   */
+  async liveProbe(): Promise<Record<string, unknown>> {
+    const script = `(() => {
+      const out = {};
+      const nav = navigator;
+      out.userAgent = nav.userAgent;
+      out.platform = nav.platform || '';
+      out.language = nav.language || '';
+      out.languages = Array.from(nav.languages || []);
+      out.cores = nav.hardwareConcurrency || 0;
+      out.memory = nav.deviceMemory || 0;
+      out.maxTouchPoints = nav.maxTouchPoints || 0;
+      out.plugins = nav.plugins ? nav.plugins.length : 0;
+      out.vendor = nav.vendor || '';
+      out.productSub = nav.productSub || '';
+      out.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      out.offsetMinutes = new Date().getTimezoneOffset();
+      out.screen = { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight, colorDepth: screen.colorDepth };
+      out.pixelRatio = window.devicePixelRatio || 1;
+      out.innerWidth = window.innerWidth;
+      out.outerWidth = window.outerWidth;
+      try {
+        const gl = document.createElement('canvas').getContext('webgl');
+        const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+        out.webglVendor = ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : (gl ? gl.getParameter(gl.VENDOR) : '');
+        out.webglRenderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : (gl ? gl.getParameter(gl.RENDERER) : '');
+      } catch (e) { out.webglVendor = ''; out.webglRenderer = ''; }
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 220; canvas.height = 40;
+        const ctx = canvas.getContext('2d');
+        ctx.textBaseline = 'top';
+        ctx.font = '14px Arial';
+        ctx.fillStyle = '#f60';
+        ctx.fillRect(0, 0, 220, 40);
+        ctx.fillStyle = '#069';
+        ctx.fillText('Joe Browser fingerprint', 2, 4);
+        out.canvasHash = String(canvas.toDataURL().length) + ':' + canvas.toDataURL().slice(-32);
+      } catch (e) { out.canvasHash = ''; }
+      try {
+        const uaData = nav.userAgentData;
+        out.brands = uaData && uaData.brands ? uaData.brands : [];
+        out.mobile = uaData ? uaData.mobile : false;
+      } catch (e) { out.brands = []; }
+      out.webdriver = nav.webdriver === true;
+      const automation = [];
+      for (const key in window) if (key.indexOf('cdc_') === 0 || key.indexOf('$cdc_') === 0) automation.push(key);
+      out.automationKeys = automation;
+      out.chrome = typeof window.chrome === 'object' && window.chrome !== null;
+      out.notificationPermission = (typeof Notification !== 'undefined') ? Notification.permission : '';
+      try {
+        const geo = nav.geolocation;
+        out.hasGeolocation = Boolean(geo);
+      } catch (e) { out.hasGeolocation = false; }
+      return JSON.stringify(out);
+    })()`;
+    const raw = await this.evaluate(script);
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new Error('The page did not return a readable fingerprint.');
     }
   }
 
@@ -633,11 +819,11 @@ export class SessionManager {
   }
 
   /** Swap a running profile's upstream without closing its tabs. */
-  async setProxy(profile: Profile): Promise<boolean> {
+  async setProxy(profile: Profile, password?: string): Promise<boolean> {
     const session = this.sessions.get(profile.id);
     if (!session) return false;
-    const password = proxyPasswordOf(profile);
-    return session.repointProxy(upstreamOf(profile.proxy, password));
+    const credential = password ?? proxyPasswordOf(profile);
+    return session.repointProxy(upstreamOf(profile.proxy, credential));
   }
 }
 

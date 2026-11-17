@@ -11,9 +11,11 @@ files:
   - package.json
   - '!**/*.map'
 
+# Everything the app loads at runtime is inside the bundle. The tray icon is embedded into the
+# main bundle by scripts/build-main.mjs rather than read from disk, because a file listed here
+# and missing from the asar fails silently: `new Tray(emptyImage)` throws and the app starts
+# with no tray, which is how the previous packaging lost it.
 asar: true
-asarUnpack:
-  - resources/**
 
 # Windows: an NSIS installer plus a portable single EXE, both from one build.
 win:

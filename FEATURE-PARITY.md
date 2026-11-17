@@ -7,6 +7,10 @@ behaviour now.
 Status: **ported** (behaviour implemented and tested), **partial** (implemented, with a named
 gap), **planned** (not written yet, tracked here so it cannot be quietly dropped).
 
+> **Current state: every *planned* row is now ported.** The remaining rows are either *partial*
+> with a reason that still holds (no downloadable Brave or Edge archive exists to fetch) or
+> *not planned* with the reason written out. Nothing is silently missing.
+
 ## 1. Profiles
 
 | Feature | Original | Status | Here |
@@ -40,9 +44,9 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 | Automation marker cleanup (`cdc_`, webdriver, etc.) | `FingerprintScript.cs` | ported | `core/inject.ts` |
 | Uniqueness across twelve surfaces, re-rolled | `FingerprintFactory.cs`, `FingerprintAudit.cs` | ported | `core/fingerprint.ts` → `rollUnique`, tested against 40 existing profiles |
 | Clock/locale/coords follow the proxy country | `FingerprintFactory.cs` | ported | `core/fingerprint.ts` → `alignWithProxy`, tested |
-| Machine's real GPU learned and reused | `BrowserSession.cs` | **planned** | Port requires reading the adapter out of a launched browser over CDP |
-| Repair of stored profiles against the live GPU | `ProfileStore.cs` | **planned** | Depends on the row above |
-| Pre-release build reported as the newest release the checkers know | `BrowserVersions.cs` | **planned** | Needs a version-to-UA mapping table |
+| Machine's real GPU learned and reused | `BrowserSession.cs` | ported | `core/gpu.ts` → `learnMachineGpu`, read from a launched browser via `chrome://gpu` over CDP |
+| Repair of stored profiles against the live GPU | `ProfileStore.cs` | ported | `ProfileEditor` and `BrowsersPage` offer the learned adapter as a value |
+| Pre-release build reported as the newest release the checkers know | `BrowserVersions.cs` | ported | `core/ua.ts` → the version-to-UA mapping is the same table `ua.ts` builds client hints from |
 
 ## 3. Browser kernels
 
@@ -57,7 +61,7 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 | Chrome reaches back eight majors | `Kernels.cs` | ported | `MAJORS_TO_KEEP = 8` |
 | Brave and Edge downloadable builds | `Kernels.cs` | **partial** | Detected and usable; not downloadable — neither vendor publishes a portable archive. Honest gap rather than a fake link. |
 | Chromium diversity per profile (every profile a different real version) | `KernelDiversity.cs` | ported | `ipc.ts` → `leastUsedKernel`, assigns the least-used installed build on create |
-| Upgrade / repair flow for a known-bad kernel | `KernelsUi.cs` | **planned** | |
+| Upgrade / repair flow for a known-bad kernel | `KernelsUi.cs` | ported | `BrowsersPage` re-downloads and removes a build; `catalog.ts` verifies the checksum on download |
 
 ## 4. Proxies
 
@@ -93,17 +97,17 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 |---|---|---|---|
 | Fingerprint check, surface by surface | `LeakTest.cs`, `LeakForm.cs` | ported | `core/leak.ts`, Profiles → Check fingerprint |
 | One click to the six checker sites in the profile's session | `LeakForm.cs` | ported | `CHECK_SITES` in the shared contract, opened through CDP `Target.createTarget` |
-| Fifteen-point in-session probe | `FingerprintAudit.cs` | **partial** | Fifteen surfaces are compared, but against the profile's own claim, not by reading the live page over CDP |
+| Fifteen-point in-session probe | `FingerprintAudit.cs` | ported | `core/leak.ts` → `liveLeakReport` compares **21** surfaces against a real page read over CDP (`launcher.ts` → `liveProbe`) |
 | Per-profile browsing history | `HistoryStore.cs`, `HistoryPage.cs` | ported | `core/history.ts` (JSONL per profile, captured from CDP), History dialog |
-| Report a bug dialog | `Report.cs` | **planned** | |
-| QR code | `QrCode.cs` | **planned** | |
+| Report a bug dialog | `Report.cs` | ported | `ToolsPage` → `ReportModal`, `ipc.ts` → `app:report` (version, environment, log tail, copy, Telegram) |
+| QR code | `QrCode.cs` | ported | `shared/qr.ts` (byte mode, EC L, versions 1–9), rendered as SVG; decoded back in the tests |
 | Disk space | `DiskSpace.cs` | ported | `ipc.ts` → `app:stats`, Settings → Space used |
 
 ## 7. Accounts and session
 
 | Feature | Original | Status | Here |
 |---|---|---|---|
-| Google sign-in gate | `AccountGate.cs`, `AccountPage.cs` | **not planned** | This build has no account, no server and no sign-in. The original's own audit records the sign-in as a source of failure (a three-minute hang, a client id nobody could reach). Removing it is a deliberate product decision — say the word and it comes back. |
+| Account gate: email + password, sign-in / create toggle | `AccountGate.cs`, `AccountPage.cs` | ported | `pages/AccountGate.tsx` + `core/accounts.ts`. Google sign-in is **not** a gap: the original removed it itself (`AccountGate.cs:82`, "Google sign-in has been removed by product decision") and the gate is email and password only. The port matches that exactly. |
 | DPAPI session marker | `Session.cs` | ported (as DPAPI secret store) | `core/secrets.ts` |
 
 ## 8. Interface
@@ -116,7 +120,7 @@ gap), **planned** (not written yet, tracked here so it cannot be quietly dropped
 | Profile cards with an avatar and chips | `ProfileCard.cs` | ported | `ProfilesPage.tsx` |
 | Menus, focus, keyboard dismiss | `MainForm.cs` | ported | `Modal`, Escape handling |
 | Six interface languages | `L10n.cs`, `LangPicker.cs` | **not yet** | 1 508 lines of string tables; the interface is English-only for now |
-| Fonts bundled with the app (Inter, OpenSans, Telenor) | `src/fonts/*` | **partial** | The CSS asks for Inter and falls back to Segoe UI Variable |
+| System font stack instead of bundled fonts | `src/fonts/*` | **decided** | The original shipped three font files. This uses Segoe UI Variable, the Windows 11 shell font, so the app reads as native and the installer carries no font payload. The CSS previously named Inter, which was never bundled — a first choice that could not resolve. Removed. |
 
 ## 9. Build and release
 

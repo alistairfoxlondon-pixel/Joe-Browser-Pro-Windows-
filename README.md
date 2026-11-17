@@ -27,7 +27,12 @@ outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
 | **Fingerprint check** | A surface-by-surface comparison of what the profile claims against what a page will observe, plus one click to the six checker sites inside the profile's own session. |
 | **History per profile** | Every page a profile visits, recorded in its own file and invisible to every other profile. Clearable. |
 | **Proxy watch** | The exit address is checked on the profile's interval; a rotation, a proxy that stopped answering and a proxy that came back are all reported. A running profile can be re-pointed without closing its tabs. |
-| **Built to be read** | A real layout system, two themes, and a window that works at every width. |
+| **A local account and a lock** | An email account stored as a salted PBKDF2 hash, an optional PIN typed at every launch, and an optional authenticator code. The window locks after the idle interval you set. Nothing is sent anywhere. |
+| **Workspace audit and repair** | Every pair of profiles is compared across twelve surfaces, plus shared exit addresses and shared builds. "Fix what can be fixed" re-rolls the newer duplicates, oldest identity kept. |
+| **Batch create** | Up to 200 at once, a group, a proxy per line, and a distinct identity and build for every one - not 200 copies of the same machine. |
+| **Cookie manager** | Export a profile's cookies and import them into another, over the browser's own debugging protocol. |
+| **15 languages** | English is complete; each other table shows the share of the interface it covers, and anything missing falls back to English rather than to a key. |
+| **Built to be read** | A real layout system, two themes, a navigation rail that collapses, and a window that works at every width. |
 | **Private by default** | Profile data stays in `%APPDATA%\JoeBrowser`. Proxy passwords are encrypted with Windows DPAPI. No telemetry, no server, no cloud. |
 
 ## Where your data lives
@@ -37,6 +42,8 @@ outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
   Profiles.json      profile records (proxy passwords are ciphertext)
   Settings.json      window theme and defaults
   key.bin            fallback encryption key, owner-only (DPAPI is used when available)
+  accounts.json      local accounts and lock settings, encrypted as a whole
+  session.json       who is signed in - identity only, never a credential
   profiles\<id>\     one Chromium/Firefox user-data-dir per profile
   kernels\<id>\      browsers downloaded by the app
 ```
@@ -89,7 +96,7 @@ asked:
 
 ```powershell
 .\scripts\release.ps1                    # build and verify
-.\scripts\release.ps1 -Publish -Tag v2.0.0   # build, verify, tag, release
+.\scripts\release.ps1 -Publish          # build, verify, tag, release
 ```
 
 ### What the checks cover
@@ -97,17 +104,26 @@ asked:
 | Check | What it proves |
 |---|---|
 | `npm run typecheck` | Both projects compile with `noUnusedLocals`, so no dead code is hiding a mistake |
-| `npm test` → core (11) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear |
-| `npm test` → ui (5) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
-| `npm run build` | The bundles produce; the main process carries no unresolved import |
+| `npm test` → core (30) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear; PBKDF2 and TOTP round-trip against the published vector; a corrupt account file is preserved instead of overwritten; the whole lock lifecycle holds from first registration to sign-out |
+| `npm test` → ui (11) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
+| `npm test` → contract (8) | Every bridge method has a preload entry and a mock, every channel the preload invokes has a handler, every translation key a page uses exists, no renderer calls a browser dialog Electron does not implement, every language table keeps its closing brace, and the release workflow runs its gates before it packages and derives its tag from `package.json` |
+| `npm run build` | The bundles produce; the main process carries no unresolved import; the tray icon is embedded rather than read from a path that packaging might not ship |
 | `electron-builder` | Both binaries exist, are a plausible size, and carry a Windows version resource |
 
 ### The release pipeline
 
-`ci/release.yml` is the GitHub Actions workflow that builds both binaries on a Windows runner and
-attaches them to a release on a tag. It lives in `ci/` rather than `.github/workflows/` because
-the GitHub App used to push this repository has no `workflows` permission — see `ci/README.md`
-for the one move that activates it.
+`.github/workflows/release.yml` builds both binaries on a Windows runner and attaches them to a
+release. It is dispatched by hand, because a release is a decision rather than a side effect of a
+push:
+
+```
+Actions -> Build EXE -> Run workflow
+```
+
+The tag comes from `package.json` unless one is given, so a new version is released by bumping the
+version and running the workflow — nothing in the file has to be edited. Typecheck, the whole test
+suite and a production build all have to pass before anything is packaged, and the run fails if
+either binary is missing rather than publishing a release with no assets.
 
 For design work without Electron:
 

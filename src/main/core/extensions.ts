@@ -358,6 +358,15 @@ const TRACKER_PLUS: Definition = {
 
 export const FIRST_PARTY: Definition[] = [PASTE_AS_HUMAN, RIGHT_CLICK, TRACKER_PLUS];
 
+/** The same three, as plain metadata: the library report and the UI both read this. */
+export const INSTALLED_DEFINITIONS: { id: string; name: string; description: string }[] = FIRST_PARTY.map(
+  (definition) => ({
+    id: definition.id,
+    name: definition.name,
+    description: definition.description,
+  }),
+);
+
 /**
  * Write every first-party extension to disk if it is missing or stale.
  *

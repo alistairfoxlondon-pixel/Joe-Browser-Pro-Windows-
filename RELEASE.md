@@ -1,142 +1,110 @@
 # Releasing Joe Browser
 
-## What went wrong the first time (the real reason nothing showed up)
+The pipeline is `.github/workflows/release.yml`. It runs on a Windows runner, builds both
+binaries, and attaches them to a GitHub release. It has produced a working release before
+(`v2.0.0`, 16 November 2026), so nothing here is theoretical.
 
-The workflow was saved to **`ci/.github/workflows/release.yml`**. That `ci/` prefix is fatal:
-GitHub only reads workflows from `.github/workflows/` **at the repository root**, so a file
-one folder deeper is just an ordinary YAML file that nobody runs. That is why
-`/actions/workflows/release.yml` returned **404** and why "Run workflow" never appeared.
+## One thing to do before the next release
 
-It is fixed on `main` now: the stray `ci/.github/` copy is gone and `ci/release.yml` is back.
-The file still has to be created at the root path — the GitHub App that writes to this repo
-has no `workflows` permission, so it cannot be pushed from here. Only you can create it.
+The live workflow at `.github/workflows/release.yml` still hard-codes `tag_name: v2.0.0`. A second
+dispatch would therefore overwrite the `v2.0.0` release instead of creating `v2.1.0`.
 
-Because the mistake was an easy one, **use the short file** below rather than the 150-line one.
-A short file is easy to eyeball, and it produces the same two EXEs.
-
----
-
-## Create the workflow (owner-only, ~1 minute)
-
-### 1. Open the new-file editor
-
-**https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/new/main**
-
-### 2. Type the path — read this carefully
-
-In the **filename box at the top**, type exactly:
+The corrected workflow is **already written** at `release/ci/release.yml`. It cannot be moved into
+place from an automated session: the GitHub App that pushes this repository has `contents: write`
+but not the separate **`workflows`** permission, so any push or API write touching
+`.github/workflows/` is refused with
 
 ```
-.github/workflows/release.yml
+refusing to allow a GitHub App to create or update workflow
+`.github/workflows/release.yml` without `workflows` permission
 ```
 
-Rules that matter, because this is where it went wrong last time:
+This is the same boundary the earlier `ci/` workaround was built around. It affects only workflow
+files; every other file in this repository pushes normally.
 
-- It must **start** with `.github`, not `ci`. No `ci/` in front, no leading `/`.
-- The box must read `.github/workflows/release.yml` and nothing else.
-- Typing the slashes is what creates the two folders.
+**The one-minute fix, for a human with the repository open:**
 
-### 3. Paste this content
+1. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/release/ci/release.yml
+2. Copy the file's contents.
+3. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/.github/workflows/release.yml
+4. Replace its contents, commit to `main`.
 
-```yaml
-name: Build EXE
+`npm test` proves the staged file is correct and fails if it drifts from what it must contain
+(`test/contract.test.ts` → *the staged workflow replacement is correct*). It also fails if the
+staged file is deleted while the live one still pins a tag.
 
-on: workflow_dispatch
+## Cutting a release
 
-permissions:
-  contents: write
+1. **Bump the version** in `package.json`. Nothing else carries a version: the installer name,
+   the release tag, the "About" page and the Add/Remove Programs entry all read this one number.
 
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npx electron-builder --win --x64 --publish never
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v2.0.0
-          name: Joe Browser 2.0.0
-          generate_release_notes: true
-          files: |
-            release/JoeBrowserSetup.exe
-            release/JoeBrowser.exe
-```
+   ```powershell
+   npm version 2.1.0 --no-git-tag-version
+   ```
 
-### 4. Commit
+2. **Commit and push to `main`.**
 
-Leave **Commit directly to the `main` branch** selected, click **Commit changes**.
+3. **Run the workflow.**
 
-### 5. Check you got it right — before doing anything else
+   ```
+   Actions -> Build EXE -> Run workflow -> Run
+   ```
 
-Open: **https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/.github/workflows/release.yml**
+   With the staged workflow in place, leave the tag field empty: it defaults to
+   `v<package.json version>`. If the pinned workflow is still live, pass the tag explicitly —
+   `v2.1.0` — because otherwise it defaults to `v2.0.0` and overwrites that release.
 
-- **Shows YAML** → correct, continue to step 6.
-- **404** → the path was wrong again. Check the filename box started with `.github`. Delete
-  what you made and redo step 1.
+4. **Wait about two minutes.** The run typechecks, tests, builds, packages, and publishes. It
+   fails rather than publishing if any of those steps fail, or if either `.exe` is missing.
 
-### 6. Run it
+5. **Check the release page.** It should carry two assets with the same names every time, so
+   links never rot:
 
-**https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/actions**
+   - `JoeBrowserSetup.exe` — the installer
+   - `JoeBrowser.exe` — the portable build
 
-You should see **Build EXE** in the left column. Click it → **Run workflow** → green
-**Run workflow** button. No tag needs typing; this file publishes `v2.0.0` by itself.
+The README links to `/releases/latest/download/...`, so they follow the newest release without
+being edited.
 
-5–8 minutes later: **https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/releases/latest**
-holds `JoeBrowserSetup.exe` and `JoeBrowser.exe`.
+## What the workflow guarantees
 
----
-
-## How to tell each failure apart
-
-| What you see | What it means |
+| Step | Why it is before packaging |
 |---|---|
-| The actions/workflows link 404s | The file is not at the root `.github/workflows/`. Check the blob link in step 5. |
-| Repo page loads but **Actions tab is empty**, no "Workflow Not Found" | Actions is off. **Settings → Actions → General → Allow all actions → Save.** |
-| "Workflow Not Found" | File exists but is not on `main`. It must be on the default branch. |
-| "Run workflow" button missing | You are not on `main`, or GitHub has not indexed the file yet (wait ~30 s). |
-| Job fails at `npm ci` | Lockfile drift — tell me the error text. |
-| Job fails at `electron-builder` | Packaging config — tell me the error text. |
-| Release exists but has no files | The build failed before packaging; the job log names the step. |
+| `npm ci` | A lockfile that does not install is a release that cannot be rebuilt |
+| `npm run typecheck` | Both projects, `noUnusedLocals` on |
+| `npm test` | 49 tests: core behaviour, every page mounting, and the contracts between the three processes |
+| `npm run build` | Main, preload and renderer bundles |
+| artifact check | Both `.exe` files exist before anything is published |
+| `fail_on_unmatched_files` | A release with no binaries looks finished and is not |
 
-## Why the build cannot happen from here
+## Building without CI
 
-Measured from this environment, not assumed:
-
-| Host | Reachable | Consequence |
-|---|---|---|
-| `github.com`, `api.github.com` | yes | branches, PRs, releases, commits |
-| `codeload.github.com` | yes | source archives only |
-| `registry.npmjs.org` | yes | JS packages; no Electron runtime in any of them |
-| `release-assets.githubusercontent.com` | **no** | the Windows Electron zip cannot be downloaded |
-| `objects.githubusercontent.com` | **no** | no binary objects |
-| `uploads.github.com` | **no** | a release can be created but no asset attached |
-
-A release record can be created from here, but no binary can be produced or attached, so the
-EXE must be built on a runner that can reach the Electron CDN: `windows-latest`. A local
-cross-build is no workaround — electron-builder needs the same blocked runtime.
-
----
-
-## The fuller workflow
-
-`ci/release.yml` is the longer version (12 steps) with a tag-vs-version guard, size checks, an
-artifact upload before publishing, and tag-triggered releases. Once the short one has produced
-a release, swap the content of `.github/workflows/release.yml` for that file if you want those
-safeguards. Do not create it at `ci/.github/...` — that path is not read by GitHub.
-
-## Alternative: build on your own Windows PC
+`scripts\release.ps1` runs the same sequence on a Windows machine that has a normal network
+connection, and publishes when asked:
 
 ```powershell
-git clone https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-.git
-cd Joe-Browser-Pro-Windows-
-.\scripts\release.ps1 -Publish -Tag v2.0.0
+.\scripts\release.ps1                    # build and verify into .\release
+.\scripts\release.ps1 -Publish           # then tag and create the release
 ```
 
-Needs Node 22 and the GitHub CLI logged in.
+It refuses to publish when the tag does not match `package.json`, so the two cannot drift.
+
+## Why a local build fails here and not on a runner
+
+`electron-builder` downloads the Electron Windows distribution from `github.com/electron/electron`
+at packaging time. This development sandbox was granted access only to `github.com`,
+`codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and
+`files.pythonhosted.org`, so the download step cannot complete here. Installing with
+`ELECTRON_SKIP_BINARY_DOWNLOAD=1` makes the code and the tests work; packaging still requires the
+runner, which has unrestricted access. This is a property of the sandbox, not of the project.
+
+## If a run fails
+
+- **`npm ci` fails on the electron postinstall** — the runner has network access, so this is
+  usually a transient CDN error. Re-run the job.
+- **Typecheck or tests fail** — nothing was published. Fix, push, run again.
+- **"artifact was not produced"** — `electron-builder` failed earlier in the log. The usual cause
+  is a missing file under `files:` in `electron-builder.yml`; the `dist/` tree is the only thing
+  the app loads at runtime apart from `package.json`.
+- **The release step fails on the tag** — the tag already exists and points at a different
+  commit. Either pass the existing tag in the `tag` input to re-publish it, or bump the version.
