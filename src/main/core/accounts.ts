@@ -499,7 +499,7 @@ export function signOut(): void {
  * session exists but a PIN or a second factor was configured: the workspace must not paint until
  * the code has been accepted.
  */
-export function lockState(settings: AppSettings): {
+export function lockState(_settings?: AppSettings): {
   state: 'gate' | 'locked' | 'open';
   account: AccountSummary | null;
   pin: boolean;
@@ -510,12 +510,23 @@ export function lockState(settings: AppSettings): {
     return { state: accountCount() === 0 ? 'gate' : 'gate', account: null, pin: false, totp: false };
   }
 
-  const pin = settings.pinEnabled && account.pinEnabled;
+  /*
+   * A PIN that exists is a PIN that locks.
+   *
+   * This used to require `settings.pinEnabled` as well, and nothing ever set that flag: a user
+   * set a PIN from the Security panel, the account recorded it, and the app still opened
+   * straight to the workspace. The account is the authority - it is what actually holds the
+   * hash - and a second switch that has to agree with it is a switch that can silently disagree.
+   *
+   * The Settings toggle now only offers to *remove* a PIN it can already see, so there is one
+   * source of truth and no way to turn the lock "on" without a secret behind it.
+   */
+  const pin = account.pinEnabled;
   const totp = account.twoFactorEnabled;
   return {
     state: pin || totp ? 'locked' : 'open',
     account,
-    pin: account.pinEnabled,
+    pin,
     totp,
   };
 }

@@ -282,7 +282,6 @@ const mockSettings: AppSettings = {
   startPage: 'https://ipfighter.com/browser-fingerprint',
   extensionsEnabled: true,
   customExtensionsEnabled: true,
-  cacheDir: '',
   clearCacheOnExit: false,
   historyEnabled: true,
   useTrash: true,

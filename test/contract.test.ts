@@ -281,6 +281,17 @@ test('the staged workflow replacement is correct and drops the pinned tag', () =
     assert.ok(staged.includes(artifact), `the staged workflow does not publish ${artifact}`);
   }
 
+  // The tag is read through the environment, not interpolated into the shell. `${{ }}` is
+  // substituted before bash runs, so a tag with a quote in it would become shell syntax, and an
+  // unset optional input arrives as the literal "null".
+  assert.ok(staged.includes('INPUT_TAG:'), 'the tag is not passed through the environment');
+  assert.ok(staged.includes('"null"'), 'an unset input is not handled');
+  assert.doesNotMatch(
+    staged,
+    /^\s+tag="\$\{\{ inputs\.tag \}\}"/m,
+    'the tag is interpolated straight into the script',
+  );
+
   // It has to be valid YAML with a build job and a workflow_dispatch trigger, because the whole
   // point is that it works where the pinned one does not.
   assert.match(staged, /^on:\s*$/m);
@@ -306,4 +317,29 @@ test('files the build depends on are not left in an ignored directory', () => {
       assert.notEqual(top, dir, `${file} lives in the ignored directory "${dir}/"`);
     }
   }
+});
+
+test('no setting is declared and then never read', () => {
+  /*
+   * A field on AppSettings that nothing reads is worse than a missing feature: it exists in the
+   * settings file, it is defaulted, and the interface may even offer a control for it, but
+   * changing it does nothing. `pinEnabled` and `defaultKernelId` were both live examples -
+   * the first meant a PIN never locked the app, the second meant a chosen build was ignored.
+   *
+   * This reads every source file and counts real references, excluding the three places a field
+   * legitimately appears while doing nothing: the interface, the defaults, and the mock.
+   */
+  const interfaceBlock = /export interface AppSettings \{([\s\S]*?)\n\}/.exec(types)![1]!;
+  const fields = [...interfaceBlock.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9]*)\??:/gm)].map((m) => m[1]!);
+
+  const sources = fs
+    .readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .filter((name) => !name.endsWith('types.ts'))
+    .filter((name) => !name.endsWith('bridge.ts')); // the preview mock mirrors the shape
+
+  const body = sources.map((name) => read(path.join('src', name))).join('\n');
+
+  const dead = fields.filter((field) => !new RegExp(`\\b${field}\\b`).test(body));
+  assert.deepEqual(dead, [], `settings nothing reads: ${dead.join(', ')}`);
 });

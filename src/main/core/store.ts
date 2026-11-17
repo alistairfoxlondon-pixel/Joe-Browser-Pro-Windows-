@@ -46,7 +46,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   startPage: THE_FINGERPRINT_TEST_URL,
   extensionsEnabled: true,
   customExtensionsEnabled: true,
-  cacheDir: '',
   clearCacheOnExit: false,
   historyEnabled: true,
   useTrash: true,
@@ -226,9 +225,23 @@ export function createProfile(input: CreateProfileInput): Profile {
      An explicit kernel id is honoured. A copy is separated from its source above. Everything
      else is spread across whatever is installed, so a batch of twenty does not become twenty
      profiles on one binary - the original's rule, and the reason it existed. */
+  /*
+   * An explicit id wins, then the workspace default, then the spread.
+   *
+   * `defaultKernelId` was declared, defaulted to '', shown nowhere and read nowhere: a stored
+   * preference that did nothing. It is consulted here so that a workspace pinned to one build
+   * actually produces profiles on that build, which is the whole reason the setting exists. A
+   * default naming a build that is no longer installed is ignored rather than honoured into a
+   * broken launch.
+   */
   let kernelId = input.kernelId ?? '';
   if (!kernelId && !source && !input.preserveFingerprint) {
-    kernelId = assignKernel(installedKernels(), store.profiles).kernelId;
+    const preferred = getSettings().defaultKernelId;
+    const installed = installedKernels();
+    kernelId =
+      preferred && installed.some((kernel) => kernel.id === preferred)
+        ? preferred
+        : assignKernel(installed, store.profiles).kernelId;
   }
   if (source) kernelId = input.kernelId ?? '';
 

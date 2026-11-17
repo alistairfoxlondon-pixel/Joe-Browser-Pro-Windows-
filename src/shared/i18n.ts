@@ -669,6 +669,10 @@ const EN: Table = {
   'proxy.lines': 'PROXIES · ONE PER LINE',
   'proxy.lines.hint': 'Anything you paste here is checked and not saved. Save only the lines that answer.',
   'proxy.paste.hint': 'Copy the working lines into Import to keep them.',
+  'sec.pin.removed': 'PIN removed. The app opens without a lock again.',
+  'set.kernel': 'DEFAULT BUILD',
+  'set.kernel.hint': 'Which downloaded build a new profile uses. "Spread evenly" gives each new profile the least-used one.',
+  'set.kernel.spread': 'Spread evenly (recommended)',
 };
 
 
@@ -1070,6 +1074,10 @@ const DE: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -1471,6 +1479,10 @@ const RU: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -1872,6 +1884,10 @@ const ES: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -2273,6 +2289,10 @@ const FR: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -2674,6 +2694,10 @@ const PT: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -3075,6 +3099,10 @@ const IT: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -3476,6 +3504,10 @@ const NL: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -3877,6 +3909,10 @@ const PL: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -4278,6 +4314,10 @@ const TR: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -4679,6 +4719,10 @@ const UK: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -5080,6 +5124,10 @@ const AR: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -5481,6 +5529,10 @@ const ZH: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -5882,6 +5934,10 @@ const JA: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 
@@ -6283,6 +6339,10 @@ const KO: Table = {
   'proxy.lines': '',
   'proxy.lines.hint': '',
   'proxy.paste.hint': '',
+  'sec.pin.removed': '',
+  'set.kernel': '',
+  'set.kernel.hint': '',
+  'set.kernel.spread': '',
 };
 
 

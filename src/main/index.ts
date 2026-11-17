@@ -4,6 +4,7 @@ import { Paths } from './core/paths';
 import { registerIpc } from './ipc';
 import { SessionManager } from './core/launcher';
 import { flushStore, getSettings, saveSettings, onStoreChanged } from './core/store';
+import { lockState } from './core/accounts';
 import { log } from './core/log';
 import * as trash from './core/trash';
 
@@ -306,7 +307,11 @@ function armIdleLock(window: BrowserWindow): void {
     clearTimeout(idleTimer);
     idleTimer = null;
   }
-  if (!minutes || minutes <= 0 || !getSettings().pinEnabled) return;
+  // Ask the account, not a settings flag: the flag was never written, so this returned early
+  // even for a user who had a PIN and an auto-lock interval configured.
+  if (!minutes || minutes <= 0) return;
+  const lock = lockState(getSettings());
+  if (!lock.pin && !lock.totp) return;
 
   const reset = (): void => {
     if (idleTimer) clearTimeout(idleTimer);

@@ -93,9 +93,30 @@ export function SecurityPanel({
               <div className="row-title">{t('sec.askOnStart')}</div>
               <div className="hint">{t('sec.askOnStart.hint')}</div>
             </div>
+            {/*
+              This switch used to write `settings.pinEnabled`, which nothing read: a user could
+              turn it on with no PIN behind it and the app still opened straight through, and
+              could turn it off with a PIN set and the PIN still locked the app. The account is
+              now the only authority, so the switch reports whether a PIN exists and switching it
+              off removes the PIN rather than hiding it.
+            */}
             <Switch
-              checked={settings.pinEnabled}
-              onChange={(pinEnabled) => void saveSettings({ pinEnabled }).then(onAccountChanged)}
+              checked={account.pinEnabled}
+              disabled={!account}
+              onChange={(next) => {
+                if (!account) return;
+                if (next) {
+                  setPinDialog(true);
+                  return;
+                }
+                void bridge()
+                  .setPin(account.email, '')
+                  .then(() => {
+                    onAccountChanged();
+                    toast.success(t('sec.pin.removed'));
+                  })
+                  .catch((error: unknown) => toast.error(t('err.generic'), messageOf(error)));
+              }}
             />
           </div>
 
@@ -172,15 +193,24 @@ export function SecurityPanel({
 /* ------------------------------------------------------------------ a switch */
 
 /** A checkbox drawn as a switch. Local to this file: it is the only place that needs one. */
-function Switch({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }): ReactNode {
+function Switch({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}): ReactNode {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       className={`toggle${checked ? ' on' : ''}`}
       onClick={() => onChange(!checked)}
-      style={{ border: 0, background: 'transparent', padding: 0, width: 'auto' }}
+      style={{ border: 0, background: 'transparent', padding: 0, width: 'auto', opacity: disabled ? 0.45 : 1 }}
     >
       <span className="track" />
     </button>

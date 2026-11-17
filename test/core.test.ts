@@ -611,11 +611,22 @@ test('the whole lock lifecycle holds together end to end', () => {
     assert.equal(accounts.lockState(settings()).state, 'open');
 
     // A PIN turns the next launch into a lock screen, and only the right one opens it.
+    //
+    // No `pinEnabled: true` here on purpose. The old test passed that flag, which the app never
+    // wrote, so it proved a path no user could reach: a user who set a PIN still got an unlocked
+    // workspace. The PIN existing is the only thing that should have to be true.
     accounts.setPin(email, '4821');
-    assert.equal(accounts.lockState({ ...settings(), pinEnabled: true }).state, 'locked');
+    assert.equal(accounts.lockState(settings()).state, 'locked');
     assert.throws(() => accounts.unlock('0000', ''), /PIN is not right/);
     accounts.unlock('4821', '');
     assert.equal(accounts.checkPin(email, '4821'), true);
+
+    // Removing the PIN removes the lock. The setting was never the authority, and a stale one
+    // must not be able to keep a lock that has no secret behind it.
+    accounts.setPin(email, '');
+    assert.equal(accounts.lockState({ ...settings(), pinEnabled: true }).state, 'open');
+    accounts.setPin(email, '4821');
+    assert.equal(accounts.lockState(settings()).state, 'locked');
 
     // Two-factor: enable with a proved code, then sign-in demands one.
     const secret = accounts.pendingTotp(email);
@@ -640,11 +651,30 @@ test('the whole lock lifecycle holds together end to end', () => {
 
     // Signing out returns to the gate, and the account survives it.
     accounts.signOut();
-    assert.equal(accounts.lockState({ ...settings(), pinEnabled: true }).state, 'gate');
+    assert.equal(accounts.lockState(settings()).state, 'gate');
     assert.equal(accounts.listAccounts().some((row) => row.email === email), true);
   } finally {
     if (previous === undefined) delete process.env['JOE_BROWSER_DATA_DIR'];
     else process.env['JOE_BROWSER_DATA_DIR'] = previous;
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a workspace default build is honoured, and ignored when it is not installed', () => {
+  // `defaultKernelId` was in the settings model from the start and read by nothing, so a user's
+  // choice silently did nothing. These two cases pin the behaviour: it applies when the named
+  // build is present, and it is ignored rather than launching a binary that is gone.
+  const before = store.getSettings();
+  try {
+    store.saveSettings({ defaultKernelId: 'kernel-that-is-not-installed' });
+    const fallback = store.createProfile({ name: 'Default build fallback' });
+    assert.notEqual(
+      fallback.kernelId,
+      'kernel-that-is-not-installed',
+      'a missing build id was written onto a profile',
+    );
+    store.deleteProfile(fallback.id, false);
+  } finally {
+    store.saveSettings({ defaultKernelId: before.defaultKernelId });
   }
 });
