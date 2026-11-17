@@ -8,8 +8,16 @@ and pinned browser builds. Nothing leaves your PC.
 · **[Portable JoeBrowser.exe](../../releases/latest/download/JoeBrowser.exe)**
 · [All releases](../../releases)
 
-Windows 10 or 11, 64-bit. The installer is per user: no administrator prompt, nothing written
-outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
+Windows 10 or 11, 64-bit. **Choose JoeBrowserSetup.exe for installation.** The setup wizard
+shows the license, lets you choose just this user or all users, select the destination folder,
+create shortcuts, and optionally launch the app when finished. All-users installation requests
+Windows administrator permission (UAC); a just-for-me installation normally needs no elevation.
+The application itself runs without administrator rights.
+
+`JoeBrowser.exe` is the **portable alternative**, not an installer: it intentionally opens directly.
+Accounts are local to this PC; registration needs no email verification and makes no cloud account.
+User data remains in `%APPDATA%\JoeBrowser`, independently of the installation folder.
+Uninstall from Windows Settings → Apps; workspace data is preserved.
 
 ---
 
@@ -48,7 +56,7 @@ outside your profile. Mounted under `%APPDATA%\JoeBrowser`.
   kernels\<id>\      browsers downloaded by the app
 ```
 
-Deleting that folder is a complete uninstall.
+To reset workspace data, back up and then remove that folder. To uninstall the application, use Windows Settings → Apps.
 
 ## How the fingerprint works, and its limits
 

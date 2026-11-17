@@ -23,7 +23,7 @@ import { messageOf } from '../util';
 export function AccountGate({
   onDone,
 }: {
-  onDone: (account: AccountSummary | null) => void;
+  onDone: (account: AccountSummary | null) => void | Promise<void>;
 }): ReactNode {
   const { t } = useI18n();
   const [mode, setMode] = useState<'signin' | 'register'>('register');
@@ -55,6 +55,7 @@ export function AccountGate({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
@@ -62,7 +63,7 @@ export function AccountGate({
         mode === 'register'
           ? await bridge().registerAccount({ email, password, displayName: name })
           : await bridge().signIn({ email, password, code: needsCode ? code : undefined });
-      onDone(account);
+      await onDone(account);
     } catch (failure) {
       const text = messageOf(failure);
       if (/six-digit code/i.test(text)) {
@@ -90,27 +91,7 @@ export function AccountGate({
             </div>
           </div>
 
-          <ul className="gate-points">
-            {(
-              [
-                ['fingerprint', 'about.f1', 'about.f1.body'],
-                ['route', 'about.f2', 'about.f2.body'],
-                ['lock', 'about.f6', 'about.f6.body'],
-              ] as const
-            ).map(([icon, title, body]) => (
-              <li key={title}>
-                <span className="gate-point-icon">
-                  <Icon name={icon} size={15} />
-                </span>
-                <span>
-                  <b>{t(title)}</b>
-                  <span>{t(body)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
 
-          <div className="gate-foot">{t('about.privacy.body')}</div>
         </div>
       </div>
 
@@ -178,7 +159,7 @@ export function AccountGate({
             </Field>
 
             {mode === 'register' ? (
-              <Field label={t('gate.name')} hint={t('gate.name.hint')}>
+              <Field label={t('gate.name')}>
                 <input
                   className="input"
                   value={name}
@@ -196,6 +177,7 @@ export function AccountGate({
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                minLength={mode === 'register' ? 6 : undefined}
                 required
               />
             </Field>
@@ -236,7 +218,8 @@ export function AccountGate({
             <button
               type="button"
               className="link"
-              onClick={() => onDone(null)}
+              disabled={busy}
+              onClick={() => { void Promise.resolve(onDone(null)).catch((failure) => setError(messageOf(failure))); }}
               title={t('gate.skip.hint')}
             >
               {t('gate.skip')}

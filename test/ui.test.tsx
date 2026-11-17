@@ -525,3 +525,67 @@ test('the coverage figures are the real thing and never claim more than exists',
   // English is the contract and is complete by definition.
   assert.equal(coverageOf('en'), 100);
 });
+
+test('registration enters an empty workspace and a remembered account survives remount', async () => {
+  reset();
+  const original = { lockState: mockBridge.lockState, listProfiles: mockBridge.listProfiles, listAccounts: mockBridge.listAccounts, registerAccount: mockBridge.registerAccount };
+  let registered = false;
+  const account = { email: 'new@example.com', displayName: 'New', created: '', lastLogin: '', pinEnabled: false, twoFactorEnabled: false };
+  mockBridge.listProfiles = async () => [];
+  mockBridge.listAccounts = async () => [];
+  mockBridge.lockState = async () => ({ state: registered ? 'open' : 'gate', account: registered ? account : null, pin: false, totp: false });
+  mockBridge.registerAccount = async () => { registered = true; return account; };
+  try {
+    await render(React.createElement(App));
+    assert.ok(container.querySelector('.gate'));
+    const setInput = (selector: string, value: string) => {
+      const input = container.querySelector(selector)!;
+      Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    };
+    await act(async () => {
+      setInput('input[type=email]', account.email);
+      setInput('input[type=password]', 'secret123');
+    });
+    await act(async () => {
+      container.querySelector('form')!.dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise(resolve => setTimeout(resolve, 30));
+    });
+    assert.equal(registered, true);
+    assert.equal(container.querySelectorAll('.nav-item').length, 8);
+    assert.equal(container.querySelector('.gate'), null);
+    await teardown();
+    await render(React.createElement(App));
+    assert.equal(container.querySelectorAll('.nav-item').length, 8);
+    assert.equal(container.querySelector('.gate'), null);
+    assert.deepEqual(problems, []);
+  } finally {
+    await teardown();
+    Object.assign(mockBridge, original);
+  }
+});
+
+test('a failed startup can reload settings, app info and account state', async () => {
+  reset();
+  const original = mockBridge.getSettings;
+  let calls = 0;
+  mockBridge.getSettings = async () => {
+    if (++calls === 1) throw new Error('Temporary startup failure');
+    return original();
+  };
+  try {
+    await render(React.createElement(App));
+    assert.ok(text().includes('Temporary startup failure'));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.banner button')!.click();
+      await new Promise(resolve => setTimeout(resolve, 30));
+    });
+    assert.equal(calls, 2);
+    assert.equal(container.querySelectorAll('.nav-item').length, 8);
+    assert.ok(!text().includes('Temporary startup failure'));
+    assert.deepEqual(problems, []);
+  } finally {
+    await teardown();
+    mockBridge.getSettings = original;
+  }
+});

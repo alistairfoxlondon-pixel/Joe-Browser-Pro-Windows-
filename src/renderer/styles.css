@@ -2618,14 +2618,15 @@ p {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 38px 40px;
+  padding: 52px 40px 32px;
   -webkit-app-region: no-drag;
   overflow-y: auto;
 }
 
 .gate-form-inner {
   width: 100%;
-  max-width: 344px;
+  margin-block: auto;
+  max-width: 380px;
 }
 
 .gate-title {
@@ -2883,3 +2884,7 @@ p {
 .profile:focus .profile-name {
   color: var(--text);
 }
+
+/* Recovery stays usable even when the normal shell cannot mount. */
+.recovery { padding: 64px 32px; max-width: 760px; margin: auto; -webkit-app-region: no-drag; }
+.recovery pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }

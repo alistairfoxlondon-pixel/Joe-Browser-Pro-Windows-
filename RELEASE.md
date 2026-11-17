@@ -1,110 +1,44 @@
 # Releasing Joe Browser
 
-The pipeline is `.github/workflows/release.yml`. It runs on a Windows runner, builds both
-binaries, and attaches them to a GitHub release. It has produced a working release before
-(`v2.0.0`, 16 November 2026), so nothing here is theoretical.
+The Windows pipeline is `.github/workflows/release.yml`; keep its reference copy at
+`ci/release.yml` identical. Releases are manual, not a side effect of every push.
 
-## One thing to do before the next release
+1. Bump `package.json` and the lockfile together (`npm version <version> --no-git-tag-version`).
+2. Run `npm run typecheck`, `npm run build`, and `npm test`.
+3. Push the working branch and open a PR.
+4. Dispatch **Build EXE** on that branch with `prerelease=true` to validate a release candidate.
+5. Check all Windows gates, then merge the PR and promote the tested release.
 
-The live workflow at `.github/workflows/release.yml` still hard-codes `tag_name: v2.0.0`. A second
-dispatch would therefore overwrite the `v2.0.0` release instead of creating `v2.1.0`.
+The workflow installs dependencies, typechecks, builds, runs the suites, packages NSIS and
+portable artifacts, then runs `node scripts/windows-smoke.mjs` **before** publishing.
+The smoke test uses a disposable custom installation directory containing spaces, installs
+all-users silently, launches the installed executable with a real preload/IPC bridge,
+registers without email verification, checks the saved session, quits and restarts, visits
+every page, then uninstalls and checks that workspace data remains. It fails on page errors.
+No test account is created on an external service.
 
-The corrected workflow is **already written** at `ci/release.yml`. It cannot be moved into
-place from an automated session: the GitHub App that pushes this repository has `contents: write`
-but not the separate **`workflows`** permission, so any push or API write touching
-`.github/workflows/` is refused with
+The default tag is derived from the package version. Never reuse a published version for
+changed binaries. Release assets:
 
-```
-refusing to allow a GitHub App to create or update workflow
-`.github/workflows/release.yml` without `workflows` permission
-```
+- `JoeBrowserSetup.exe`: assisted Windows installation (license, install scope, destination,
+  shortcuts, completion/launch, Add/Remove Programs uninstaller).
+- `JoeBrowser.exe`: portable executable, intentionally no installation wizard.
 
-This is the same boundary the earlier `ci/` workaround was built around. It affects only workflow
-files; every other file in this repository pushes normally.
+All-users setup requests UAC elevation; per-user setup and normal app execution do not.
+The binaries are not code-signed: neither UAC settings nor the wizard can remove SmartScreen's
+unknown-publisher warning. Signing needs a publisher certificate not present in this repository.
 
-**The one-minute fix, for a human with the repository open:**
+## Verification limits
 
-1. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/ci/release.yml
-2. Copy the file's contents.
-3. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/.github/workflows/release.yml
-4. Replace its contents, commit to `main`.
+The automated installer test runs silently, so it does not click through the interactive wizard
+or approve a physical UAC prompt. Before broad deployment, manually check the wizard on Windows
+10/11 using a standard user and an administrator, cancellation, upgrade from the previous
+release, shortcut choices, and uninstall from Windows Settings. Automated checks do not prove
+that every possible machine, old workspace, browser download, or proxy service is error-free.
 
-`npm test` proves the staged file is correct and fails if it drifts from what it must contain
-(`test/contract.test.ts` → *the staged workflow replacement is correct*). It also fails if the
-staged file is deleted while the live one still pins a tag.
+## Local Windows build
 
-## Cutting a release
-
-1. **Bump the version** in `package.json`. Nothing else carries a version: the installer name,
-   the release tag, the "About" page and the Add/Remove Programs entry all read this one number.
-
-   ```powershell
-   npm version 2.1.0 --no-git-tag-version
-   ```
-
-2. **Commit and push to `main`.**
-
-3. **Run the workflow.**
-
-   ```
-   Actions -> Build EXE -> Run workflow -> Run
-   ```
-
-   With the staged workflow in place, leave the tag field empty: it defaults to
-   `v<package.json version>`. If the pinned workflow is still live, pass the tag explicitly —
-   `v2.1.0` — because otherwise it defaults to `v2.0.0` and overwrites that release.
-
-4. **Wait about two minutes.** The run typechecks, tests, builds, packages, and publishes. It
-   fails rather than publishing if any of those steps fail, or if either `.exe` is missing.
-
-5. **Check the release page.** It should carry two assets with the same names every time, so
-   links never rot:
-
-   - `JoeBrowserSetup.exe` — the installer
-   - `JoeBrowser.exe` — the portable build
-
-The README links to `/releases/latest/download/...`, so they follow the newest release without
-being edited.
-
-## What the workflow guarantees
-
-| Step | Why it is before packaging |
-|---|---|
-| `npm ci` | A lockfile that does not install is a release that cannot be rebuilt |
-| `npm run typecheck` | Both projects, `noUnusedLocals` on |
-| `npm test` | 49 tests: core behaviour, every page mounting, and the contracts between the three processes |
-| `npm run build` | Main, preload and renderer bundles |
-| artifact check | Both `.exe` files exist before anything is published |
-| `fail_on_unmatched_files` | A release with no binaries looks finished and is not |
-
-## Building without CI
-
-`scripts\release.ps1` runs the same sequence on a Windows machine that has a normal network
-connection, and publishes when asked:
-
-```powershell
-.\scripts\release.ps1                    # build and verify into .\release
-.\scripts\release.ps1 -Publish           # then tag and create the release
-```
-
-It refuses to publish when the tag does not match `package.json`, so the two cannot drift.
-
-## Why a local build fails here and not on a runner
-
-`electron-builder` downloads the Electron Windows distribution from `github.com/electron/electron`
-at packaging time. This development sandbox was granted access only to `github.com`,
-`codeload.github.com`, `api.github.com`, `registry.npmjs.org`, `pypi.org` and
-`files.pythonhosted.org`, so the download step cannot complete here. Installing with
-`ELECTRON_SKIP_BINARY_DOWNLOAD=1` makes the code and the tests work; packaging still requires the
-runner, which has unrestricted access. This is a property of the sandbox, not of the project.
-
-## If a run fails
-
-- **`npm ci` fails on the electron postinstall** — the runner has network access, so this is
-  usually a transient CDN error. Re-run the job.
-- **Typecheck or tests fail** — nothing was published. Fix, push, run again.
-- **"artifact was not produced"** — `electron-builder` failed earlier in the log. The usual cause
-  is a missing file under `files:` in `electron-builder.yml`; the `dist/` tree is the only thing
-  the app loads at runtime apart from `package.json`.
-- **The release step fails on the tag** — the tag already exists and points at a different
-  commit. Either pass the existing tag in the `tag` input to re-publish it, or bump the version.
+Run `npm ci`, `npm run typecheck`, `npm run build`, `npm test`,
+`npx electron-builder --win --x64 --publish never`, and `node scripts/windows-smoke.mjs`.
+Packaging needs network access to Electron's binary download hosts. This Linux sandbox cannot
+perform native Windows installation; the GitHub Windows runner performs that validation.
