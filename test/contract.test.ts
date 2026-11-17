@@ -232,14 +232,14 @@ test('the release workflow builds what it says it publishes', () => {
    * that pushes this repository has `contents: write` but not the separate `workflows`
    * permission, so a push touching .github/workflows/ is refused outright.
    *
-   * The replacement is staged at release/ci/release.yml and the test below checks it. This
+   * The replacement is staged at ci/release.yml and the test below checks it. This
    * assertion exists so the pin cannot be forgotten: the moment someone with workflow rights
    * copies the staged file over, the check passes.
    */
   const pinned = /tag_name:\s*v\d+\.\d+\.\d+/.test(workflow);
   if (pinned) {
     assert.ok(
-      fs.existsSync(path.join(root, 'release/ci/release.yml')),
+      fs.existsSync(path.join(root, 'ci/release.yml')),
       'the live workflow pins a literal tag and no replacement is staged',
     );
   }
@@ -254,7 +254,7 @@ test('the release workflow builds what it says it publishes', () => {
 });
 
 test('the staged workflow replacement is correct and drops the pinned tag', () => {
-  const staged = read('release/ci/release.yml');
+  const staged = read('ci/release.yml');
 
   // This file is what a maintainer copies to .github/workflows/release.yml. It must not carry
   // the defect it exists to fix.
@@ -286,4 +286,24 @@ test('the staged workflow replacement is correct and drops the pinned tag', () =
   assert.match(staged, /^on:\s*$/m);
   assert.match(staged, /workflow_dispatch:/);
   assert.match(staged, /runs-on:\s*windows-latest/);
+});
+
+test('files the build depends on are not left in an ignored directory', () => {
+  // `release/` is electron-builder's output directory and is gitignored. Putting a source file
+  // there looks committed and is not: it exists on the machine that wrote it and nowhere else,
+  // and a test reading it passes locally and fails on a fresh clone. That mistake was made once.
+  const ignored = read('.gitignore')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map((line) => line.replace(/\/$/, ''));
+
+  // The staged workflow and everything this suite reads must live outside those paths.
+  for (const file of ['ci/release.yml', '.github/workflows/release.yml', 'package.json', 'electron-builder.yml']) {
+    assert.ok(fs.existsSync(path.join(root, file)), `${file} does not exist`);
+    for (const dir of ignored) {
+      const top = file.split('/')[0]!;
+      assert.notEqual(top, dir, `${file} lives in the ignored directory "${dir}/"`);
+    }
+  }
 });
