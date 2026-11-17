@@ -15,6 +15,9 @@ async function main(): Promise<void> {
   assert.equal(process.platform, 'win32');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'joe-live-test-'));
   process.env.JOE_BROWSER_DATA_DIR = root;
+  // Windows Chromium's AppContainer needs read and traverse access to the test binaries.
+  // The runner's private temporary directory is not guaranteed to grant that by default.
+  execFileSync('icacls', [root, '/grant', '*S-1-15-2-1:(OI)(CI)(RX)'], { windowsHide: true });
   try {
     console.log('Installing the two original default extensions');
     await ensureShipped();
