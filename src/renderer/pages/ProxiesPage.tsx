@@ -178,7 +178,7 @@ export function ProxiesPage({
           <Button variant="soft" icon="wifi" onClick={() => void diagnostics(null)}>
             {t('net.title')}
           </Button>
-          <Button variant="soft" icon="bolt" onClick={() => setBatchTesting(true)}>
+          <Button variant="soft" icon="speed" onClick={() => setBatchTesting(true)}>
             {t('tools.proxy')}
           </Button>
           <Button variant="soft" icon="upload" onClick={() => setImporting(true)}>
@@ -226,7 +226,7 @@ export function ProxiesPage({
 
                   {network.warnings.map((warning) => (
                     <div key={warning} style={{ marginTop: 8 }}>
-                      <Banner tone="warn" icon="warning">
+                      <Banner tone="warn" icon="info">
                         {warning}
                       </Banner>
                     </div>
@@ -276,7 +276,7 @@ export function ProxiesPage({
                             : undefined
                       }
                     >
-                      {busy ? <span className="spinner" /> : <Icon name={status === 'ok' ? 'wifi' : status === 'err' ? 'warning' : 'proxy'} />}
+                      {busy ? <span className="spinner" /> : <Icon name={status === 'ok' ? 'wifi' : status === 'err' ? 'info' : 'proxy'} />}
                     </div>
 
                     <div className="row-main">
@@ -423,7 +423,7 @@ function BatchTestModal({ onClose }: { onClose: () => void }): ReactNode {
           </Button>
           <Button
             variant="primary"
-            icon="bolt"
+            icon="speed"
             busy={busy}
             disabled={parsed === 0}
             onClick={() => void run()}
@@ -446,7 +446,7 @@ function BatchTestModal({ onClose }: { onClose: () => void }): ReactNode {
         </Field>
 
         {error ? (
-          <Banner tone="err" icon="warning">
+          <Banner tone="err" icon="info">
             {error}
           </Banner>
         ) : null}

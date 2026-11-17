@@ -488,7 +488,7 @@ export function ProfileEditor({
                 <Button size="sm" icon="refresh" onClick={reroll}>
                   {t('ed.fp.new')}
                 </Button>
-                <Button size="sm" variant="soft" icon="sparkle" onClick={randomise}>
+                <Button size="sm" variant="soft" icon="shuffle" onClick={randomise}>
                   {t('ed.fp.random')}
                 </Button>
                 <Button size="sm" variant="ghost" icon="cpu" onClick={useThisPc} busy={learning}>
@@ -503,13 +503,13 @@ export function ProfileEditor({
                 <div style={{ marginTop: 3 }}>{t('ed.fp.clash.body')}</div>
               </Banner>
             ) : (
-              <Banner tone="ok" icon="shield">
+              <Banner tone="ok" icon="check">
                 {t('ed.fp.unique').replace('{n}', String(existing.length))}
               </Banner>
             )}
 
             {firefoxWarning ? (
-              <Banner tone="warn" icon="warning">
+              <Banner tone="warn" icon="info">
                 <b>{t('ed.fp.firefox')}</b>
                 <div style={{ marginTop: 3 }}>{t('ed.fp.firefox.body')}</div>
               </Banner>
@@ -708,7 +708,7 @@ export function ProfileEditor({
             </div>
 
             <div className="section-label">{t('ed.webrtc')}</div>
-            <Banner tone="info" icon="shield">
+            <Banner tone="info" icon="info">
               The clock, language and coordinates follow the connection when “{t('ed.automatch')}” is on.
               With it off the profile keeps the values on the fingerprint tab, and a site comparing the
               two will notice a mismatch.

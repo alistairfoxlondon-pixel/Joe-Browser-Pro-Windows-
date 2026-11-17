@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { AccountSummary, AppInfo, AppSettings, KernelBuild, LanguageInfo, StoreStats } from '../../shared/types';
+import type { AppInfo, AppSettings, KernelBuild, LanguageInfo, StoreStats } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
+import { SubscriptionCard } from '../components/SubscriptionCard';
 import {
   Banner,
   Button,
@@ -30,17 +31,15 @@ import { messageOf } from '../util';
 export function SettingsPage({
   settings,
   info,
-  account,
   saveSettings,
   refreshProfiles,
-  onAccountChanged,
+  onSignedOut,
 }: {
   settings: AppSettings;
   info: AppInfo | null;
-  account: AccountSummary | null;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   refreshProfiles: () => Promise<void>;
-  onAccountChanged: () => Promise<void> | void;
+  onSignedOut: () => void;
 }): ReactNode {
   const { t } = useI18n();
   const toast = useToast();
@@ -368,13 +367,11 @@ export function SettingsPage({
             </div>
           </div>
 
+          <div className="section-label">Subscription</div>
+          <SubscriptionCard onSignedOut={onSignedOut} />
+
           <div className="section-label">{t('sec.title')}</div>
-          <SecurityPanel
-            settings={settings}
-            saveSettings={saveSettings}
-            account={account}
-            onAccountChanged={() => void onAccountChanged()}
-          />
+          <SecurityPanel settings={settings} saveSettings={saveSettings} />
 
           <div className="section-label">{t('tools.logs')}</div>
           <div className="panel">

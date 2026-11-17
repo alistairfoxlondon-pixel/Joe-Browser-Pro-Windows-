@@ -202,7 +202,7 @@ export function ToolsPage({
               document.getElementById('joe-trash')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             })}
             {tile('archive', t('tools.clean'), t('tools.clean.hint'), cleanCaches, 'clean')}
-            {tile('shield', t('tools.audit'), t('tools.audit.hint'), runAudit, 'audit')}
+            {tile('layers', t('tools.audit'), t('tools.audit.hint'), runAudit, 'audit')}
             {tile('cpu', t('tools.gpu'), t('tools.gpu.hint'), () => onNavigate('browsers'))}
             {tile('terminal', t('tools.logs'), t('tools.logs.hint'), () => void bridge().openLogsDir())}
           </div>
@@ -347,7 +347,7 @@ export function ToolsPage({
 
           {settings?.useTrash === false ? (
             <div style={{ marginTop: 10 }}>
-              <Banner tone="warn" icon="warning">
+              <Banner tone="warn" icon="info">
                 The recycle bin is off, so a deleted profile is erased immediately. Turn it back on in Settings.
               </Banner>
             </div>
@@ -430,7 +430,7 @@ export function ToolsPage({
           }
         >
           {audit.findings.length === 0 ? (
-            <EmptyState icon="shield" title={t('audit.clean')} body={t('audit.clean.body')} />
+            <EmptyState icon="check" title={t('audit.clean')} body={t('audit.clean.body')} />
           ) : (
             <div className="stack">
               {audit.findings.map((finding, index) => (
@@ -522,7 +522,7 @@ function ReportModal({ onClose }: { onClose: () => void }): ReactNode {
           <textarea className="textarea" rows={4} value={note} onChange={(event) => setNote(event.target.value)} />
         </Field>
 
-        <Banner tone="info" icon="shield">
+        <Banner tone="info" icon="info">
           {t('rep.includes')}
         </Banner>
 

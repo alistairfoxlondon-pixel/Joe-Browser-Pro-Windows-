@@ -27,7 +27,7 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
   { icon: 'phone', title: 'about.f5', body: 'about.f5.body' },
   { icon: 'route', title: 'about.f6', body: 'about.f6.body' },
   { icon: 'extensions', title: 'about.f7', body: 'about.f7.body' },
-  { icon: 'shield', title: 'about.f8', body: 'about.f8.body' },
+  { icon: 'lock', title: 'about.f8', body: 'about.f8.body' },
 ];
 
 export function AboutPage({
@@ -152,7 +152,7 @@ export function AboutPage({
           <div className="section-label">{t('about.privacy')}</div>
           <div className="panel">
             <div className="spread" style={{ alignItems: 'flex-start' }}>
-              <Icon name="shield" />
+              <Icon name="lock" />
               <div className="grow">
                 <div style={{ fontWeight: 590 }}>{t('about.privacy')}</div>
                 <div className="hint" style={{ marginTop: 3 }}>{t('about.privacy.body')}</div>

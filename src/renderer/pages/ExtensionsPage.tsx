@@ -134,7 +134,7 @@ export function ExtensionsPage({
             {(report?.shipped ?? []).map((item) => (
               <div className="row" key={item.id}>
                 <div className="row-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
-                  <Icon name="shield" />
+                  <Icon name="extensions" />
                 </div>
                 <div className="row-main">
                   <div className="row-title">

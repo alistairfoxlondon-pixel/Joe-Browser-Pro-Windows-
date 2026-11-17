@@ -83,7 +83,7 @@ export function ProfileCard({
             <span className="truncate">{profile.name}</span>
             {profile.freshSession ? (
               <span className="lock" title={t('ed.fresh')}>
-                <Icon name="shield" size={12} />
+                <Icon name="refresh" size={14} />
               </span>
             ) : null}
           </div>
@@ -120,7 +120,7 @@ export function ProfileCard({
         <Chip tone={statusTone === 'muted' ? undefined : (statusTone as 'accent' | 'ok' | 'warn' | 'err')}>
           {running ? (
             <>
-              <Icon name="bolt" size={12} />
+              <Icon name="play" size={14} />
               {t('generic.running')}
             </>
           ) : (
@@ -193,7 +193,7 @@ export function ProfileCard({
         <div className="spacer" />
 
         {running ? (
-          <Button size="sm" variant="ok" icon="bolt" onClick={onOpen} title={t('card.focus')}>
+          <Button size="sm" variant="ok" icon="play" onClick={onOpen} title={t('card.focus')}>
             {clock(session?.startedAt ?? '') || t('generic.running')}
           </Button>
         ) : (
@@ -257,7 +257,7 @@ export function ProfileRow({
       </div>
 
       <div className="row-actions">
-        <Button size="sm" variant={running ? 'ok' : 'primary'} icon={running ? 'bolt' : 'play'} onClick={onOpen}>
+        <Button size="sm" variant={running ? 'ok' : 'primary'} icon={running ? 'play' : 'play'} onClick={onOpen}>
           {running ? t('card.focus') : t('btn.open')}
         </Button>
         <Menu

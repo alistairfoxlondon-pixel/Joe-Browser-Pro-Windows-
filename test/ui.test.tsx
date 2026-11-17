@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { format } from 'node:util';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -50,6 +51,7 @@ install('CustomEvent', win.CustomEvent);
 install('MouseEvent', win.MouseEvent);
 install('KeyboardEvent', win.KeyboardEvent);
 install('getComputedStyle', win.getComputedStyle.bind(win));
+install('localStorage', win.localStorage);
 install('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0));
 install('cancelAnimationFrame', (handle: number) => clearTimeout(handle));
 install('IS_REACT_ACT_ENVIRONMENT', true);
@@ -78,24 +80,103 @@ const { I18nProvider } = await import('../src/renderer/i18n');
 const { ToastProvider } = await import('../src/renderer/components/UI');
 const { ENGLISH_TABLE, allKeys, coverageOf } = await import('../src/shared/i18n');
 const { encodeQr, qrPath } = await import('../src/shared/qr');
-const { AccountGate, LockScreen } = await import('../src/renderer/pages/AccountGate');
+const { AccountGate } = await import('../src/renderer/pages/AccountGate');
+const { AdminPage } = await import('../src/renderer/pages/AdminPage');
 const { SecurityPanel } = await import('../src/renderer/pages/SecurityPanel');
+const { SubscriptionProvider } = await import('../src/renderer/cloud/subscription');
 
 // The bridge the renderer expects, installed before any component looks for it.
 (win as unknown as { joe: unknown }).joe = mockBridge;
+
+/**
+ * A cloud that behaves like the real one from the window's point of view: a session that can be
+ * signed in or out, and an entitlement the panel can read. Installed through the documented
+ * `__joeCloud` seam, so nothing here talks to the network.
+ */
+const premiumEntitlement = () => ({
+  expiresAt: new Date(Date.now() + 365 * 86_400_000).toISOString(),
+  serverTime: new Date().toISOString(),
+  isAdmin: false,
+  isBlocked: false,
+  plan: 'premium' as const,
+  source: 'server' as const,
+});
+
+const signedInUser = () => ({ id: 'local-test-user', email: 'joe@example.com' });
+
+const fakeCloud = {
+  user: signedInUser() as null | { id: string; email: string },
+  entitlement: premiumEntitlement(),
+  async currentUser() {
+    return this.user;
+  },
+  async signInWithPassword(email: string) {
+    this.user = { id: 'local-test-user', email };
+    return this.user;
+  },
+  async signUp(email: string) {
+    this.user = { id: 'local-test-user', email };
+    return this.user;
+  },
+  async signOut() {
+    this.user = null;
+  },
+  async myEntitlement() {
+    return { ...this.entitlement, serverTime: new Date().toISOString() };
+  },
+  async startTrial() {
+    return { ...premiumEntitlement(), plan: 'trial' as const, started: true };
+  },
+  async redeemCode() {
+    return {
+      expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      serverTime: new Date().toISOString(),
+    };
+  },
+  async adminListUsers() {
+    return [];
+  },
+  async adminListCodes() {
+    return [];
+  },
+  async adminListTrialClaims() {
+    return [];
+  },
+  async adminCreateCodes() {
+    return [];
+  },
+  async adminRevokeCode() {
+    /* no-op */
+  },
+  async adminSetBlocked() {
+    /* no-op */
+  },
+  async adminSetExpiry() {
+    /* no-op */
+  },
+};
+(globalThis as unknown as { __joeCloud: typeof fakeCloud }).__joeCloud = fakeCloud;
+
+function signIn(): void {
+  fakeCloud.user = signedInUser();
+  fakeCloud.entitlement = premiumEntitlement();
+}
+function signOutCloud(): void {
+  fakeCloud.user = null;
+}
 
 const problems: string[] = [];
 const originalError = console.error;
 const originalWarn = console.warn;
 
 console.error = (...args: unknown[]) => {
-  problems.push(String(args[0]));
+  problems.push(format(...args));
 };
 console.warn = (...args: unknown[]) => {
-  const first = String(args[0]);
+  const first = String(args[0] ?? '');
   // React's dev build warns about act() around an async effect; that is the harness, not the app.
   if (first.includes('not wrapped in act')) return;
-  problems.push(first);
+  problems.push(format(...args));
 };
 
 const container = win.document.getElementById('root')!;
@@ -110,7 +191,11 @@ function hosted(element: React.ReactElement): React.ReactElement {
   return React.createElement(
     I18nProvider,
     { language: 'en' },
-    React.createElement(ToastProvider, null, element),
+    React.createElement(
+      SubscriptionProvider,
+      { user: fakeCloud.user },
+      React.createElement(ToastProvider, null, element),
+    ),
   );
 }
 
@@ -149,6 +234,11 @@ function text(): string {
 
 function reset(): void {
   problems.length = 0;
+  try {
+    win.localStorage.clear();
+  } catch {
+    /* the jsdom storage is always there; a failure here must not hide a real one */
+  }
 }
 
 test.after(() => {
@@ -159,6 +249,7 @@ test.after(() => {
 /* ------------------------------------------------------------------ the shell */
 
 test('the window mounts and paints the profile list', async () => {
+  signIn();
   reset();
   await render(React.createElement(App));
 
@@ -192,6 +283,7 @@ test('the window mounts and paints the profile list', async () => {
 });
 
 test('the rail can be collapsed without losing a destination', async () => {
+  signIn();
   reset();
   await render(React.createElement(App));
 
@@ -212,6 +304,7 @@ test('the rail can be collapsed without losing a destination', async () => {
 });
 
 test('every nav entry navigates to a page that renders', async () => {
+  signIn();
   for (const [index, expected] of [
     [1, 'History'],
     [2, 'Proxies'],
@@ -245,6 +338,7 @@ test('every nav entry navigates to a page that renders', async () => {
 /* ------------------------------------------------------------------ the pages */
 
 test('every page renders on its own', async () => {
+  signIn();
   const profiles = await mockBridge.listProfiles();
   const settings = await mockBridge.getSettings();
   const info = await mockBridge.getAppInfo();
@@ -273,15 +367,19 @@ test('every page renders on its own', async () => {
     ],
     [
       'SettingsPage',
-      React.createElement(SettingsPage, { settings, info, saveSettings: async () => settings, refreshProfiles: refresh }),
+      React.createElement(SettingsPage, { settings, info, saveSettings: async () => settings, refreshProfiles: refresh, onSignedOut: () => undefined }),
       'Settings',
     ],
     ['AboutPage', React.createElement(AboutPage, { info, profiles }), 'About'],
+    ['AdminPage', React.createElement(AdminPage, {}), 'Admin panel'],
   ];
 
   for (const [name, element, expected] of cases) {
     reset();
+    // The admin panel is administrator-only; give it an administrator for its own test.
+    if (name === 'AdminPage') fakeCloud.entitlement = { ...premiumEntitlement(), isAdmin: true };
     await render(hosted(element));
+    if (name === 'AdminPage') signIn();
     assert.ok(text().toLowerCase().includes(expected.toLowerCase()), `${name} did not render`);
     assert.deepEqual(problems, [], `${name}: ${problems.join(' | ')}`);
   }
@@ -290,6 +388,7 @@ test('every page renders on its own', async () => {
 });
 
 test('the dialogs open with a profile behind them', async () => {
+  signIn();
   const profiles = await mockBridge.listProfiles();
   const settings = await mockBridge.getSettings();
   const first = profiles[0]!;
@@ -326,6 +425,7 @@ test('the dialogs open with a profile behind them', async () => {
 });
 
 test('an empty store shows the empty state rather than a blank page', async () => {
+  signIn();
   reset();
   const settings = await mockBridge.getSettings();
   await render(hosted(
@@ -351,6 +451,7 @@ test('an empty store shows the empty state rather than a blank page', async () =
 });
 
 test('every interactive control carries a name a person can hear', async () => {
+  signIn();
   const profiles = await mockBridge.listProfiles();
   const settings = await mockBridge.getSettings();
   await render(hosted(
@@ -384,7 +485,8 @@ test('every interactive control carries a name a person can hear', async () => {
 
 /* ------------------------------------------------------------------ the gate */
 
-test('the gate and the lock both render and can be dismissed', async () => {
+test('the gate renders and can be dismissed', async () => {
+  signOutCloud();
   const settings = await mockBridge.getSettings();
 
   reset();
@@ -402,45 +504,103 @@ test('the gate and the lock both render and can be dismissed', async () => {
   );
   assert.deepEqual(problems, [], `AccountGate: ${problems.join(' | ')}`);
 
-  reset();
-  const lock = {
-    state: 'locked' as const,
-    account: {
-      email: 'joe@example.com',
-      displayName: 'Joe',
-      created: new Date().toISOString(),
-      lastLogin: new Date().toISOString(),
-      pinEnabled: true,
-      twoFactorEnabled: true,
-    },
-    pin: true,
-    totp: true,
-  };
-  await render(
-    hosted(React.createElement(LockScreen, { lock, onUnlocked: () => undefined, onSignOut: () => undefined })),
-  );
-  const lockBody = text();
-  assert.ok(lockBody.includes('Joe'), 'the lock screen does not name the account');
-  assert.ok(lockBody.toLowerCase().includes('unlock'), 'the lock screen has no unlock action');
-  assert.deepEqual(problems, [], `LockScreen: ${problems.join(' | ')}`);
-
+  // The security panel owns its local identity; with the mock bridge's local account present the
+  // PIN and the second factor are on screen, without the removed lock props.
   reset();
   await render(
     hosted(
       React.createElement(SecurityPanel, {
         settings,
         saveSettings: async () => settings,
-        account: lock.account,
-        onAccountChanged: () => undefined,
       }),
     ),
   );
   const security = text();
   assert.ok(security.includes('Security'), 'the security panel has no heading');
-  assert.ok(security.includes('2FA') || security.includes('Two-factor'), 'the second factor is missing');
+  assert.ok(
+    security.includes('PIN') || security.toLowerCase().includes('two-factor') || security.includes('2FA'),
+    'neither the PIN nor the second factor is offered',
+  );
   assert.deepEqual(problems, [], `SecurityPanel: ${problems.join(' | ')}`);
 
+  signIn();
   await teardown();
+});
+
+test('the idle lock draws over the workspace and clears with the local PIN', async () => {
+  signIn();
+  reset();
+  let idleListener: (() => void) | null = null;
+  const originalEvents = (win as unknown as { joeEvents?: unknown }).joeEvents;
+  const originalLockState = mockBridge.lockState;
+  const originalUnlock = mockBridge.unlock;
+  let unlockCalls = 0;
+  (win as unknown as { joeEvents?: unknown }).joeEvents = {
+    on(channel: string, listener: () => void) {
+      if (channel === 'lock:idle') idleListener = listener;
+      return () => undefined;
+    },
+  };
+  const lockedAccount = {
+    email: 'joe@example.com',
+    displayName: 'Joe',
+    created: new Date().toISOString(),
+    lastLogin: new Date().toISOString(),
+    pinEnabled: true,
+    twoFactorEnabled: false,
+  };
+  mockBridge.lockState = async () => ({ state: 'locked' as const, account: lockedAccount, pin: true, totp: false });
+  mockBridge.unlock = async (input: { pin: string; code: string }) => {
+    unlockCalls += 1;
+    if (input.pin !== '1234') throw new Error('That PIN is not right.');
+  };
+  try {
+    await render(React.createElement(App));
+    assert.equal(container.querySelector('.lock-overlay'), null, 'the lock drew before the idle event');
+    assert.ok(idleListener, 'the shell never subscribed to the idle event');
+
+    await act(async () => {
+      idleListener!();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.ok(container.querySelector('.lock-overlay'), 'the idle lock did not appear');
+
+    const setPin = (value: string) => {
+      const input = container.querySelector('.lock-overlay input[aria-label="PIN"]') as HTMLInputElement;
+      assert.ok(input, 'the PIN field is missing');
+      Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+    };
+
+    // A wrong PIN keeps the lock up and shows why.
+    await act(async () => {
+      setPin('0000');
+    });
+    await act(async () => {
+      container.querySelector('.lock-overlay form')!.dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.equal(unlockCalls, 1);
+    assert.ok(container.querySelector('.lock-overlay'), 'a wrong PIN dismissed the lock');
+    assert.ok(text().includes('PIN') || text().includes('not right'), 'no reason for the failed unlock');
+
+    // The right PIN clears it.
+    await act(async () => {
+      setPin('1234');
+    });
+    await act(async () => {
+      container.querySelector('.lock-overlay form')!.dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.equal(unlockCalls, 2);
+    assert.equal(container.querySelector('.lock-overlay'), null, 'the lock did not clear on the right PIN');
+    assert.deepEqual(problems, [], `lock: ${problems.join(' | ')}`);
+  } finally {
+    await teardown();
+    (win as unknown as { joeEvents?: unknown }).joeEvents = originalEvents;
+    mockBridge.lockState = originalLockState;
+    mockBridge.unlock = originalUnlock;
+  }
 });
 
 /* ------------------------------------------------------------------ the second factor */
@@ -528,30 +688,43 @@ test('the coverage figures are the real thing and never claim more than exists',
 
 test('registration enters an empty workspace and a remembered account survives remount', async () => {
   reset();
-  const original = { lockState: mockBridge.lockState, listProfiles: mockBridge.listProfiles, listAccounts: mockBridge.listAccounts, registerAccount: mockBridge.registerAccount };
+  const originalListProfiles = mockBridge.listProfiles;
+  const originalListAccounts = mockBridge.listAccounts;
   let registered = false;
-  const account = { email: 'new@example.com', displayName: 'New', created: '', lastLogin: '', pinEnabled: false, twoFactorEnabled: false };
   mockBridge.listProfiles = async () => [];
   mockBridge.listAccounts = async () => [];
-  mockBridge.lockState = async () => ({ state: registered ? 'open' : 'gate', account: registered ? account : null, pin: false, totp: false });
-  mockBridge.registerAccount = async () => { registered = true; return account; };
+  signOutCloud();
+  const originalSignUp = fakeCloud.signUp.bind(fakeCloud);
+  fakeCloud.signUp = async (email: string) => {
+    registered = true;
+    return originalSignUp(email);
+  };
   try {
     await render(React.createElement(App));
-    assert.ok(container.querySelector('.gate'));
+    assert.ok(container.querySelector('.gate'), 'the gate did not appear without a session');
     const setInput = (selector: string, value: string) => {
       const input = container.querySelector(selector)!;
       Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value')!.set!.call(input, value);
       input.dispatchEvent(new win.Event('input', { bubbles: true }));
     };
+    // Switch to the create-account tab.
+    const createTab = [...container.querySelectorAll('.gate [role="tab"]')].find((button) =>
+      (button.textContent ?? '').toLowerCase().includes('create account'),
+    );
+    assert.ok(createTab, 'the create-account tab is missing');
     await act(async () => {
-      setInput('input[type=email]', account.email);
+      createTab!.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      setInput('input[type=email]', 'new@example.com');
       setInput('input[type=password]', 'secret123');
     });
     await act(async () => {
       container.querySelector('form')!.dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
-      await new Promise(resolve => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    assert.equal(registered, true);
+    assert.equal(registered, true, 'sign-up was never called');
+    assert.equal(fakeCloud.user?.email, 'new@example.com');
     assert.equal(container.querySelectorAll('.nav-item').length, 8);
     assert.equal(container.querySelector('.gate'), null);
     await teardown();
@@ -561,11 +734,15 @@ test('registration enters an empty workspace and a remembered account survives r
     assert.deepEqual(problems, []);
   } finally {
     await teardown();
-    Object.assign(mockBridge, original);
+    mockBridge.listProfiles = originalListProfiles;
+    mockBridge.listAccounts = originalListAccounts;
+    fakeCloud.signUp = originalSignUp;
+    signIn();
   }
 });
 
 test('a failed startup can reload settings, app info and account state', async () => {
+  signIn();
   reset();
   const original = mockBridge.getSettings;
   let calls = 0;

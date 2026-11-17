@@ -20,6 +20,9 @@ import { ProfileCard, ProfileRow, shortOs } from '../components/ProfileCard';
 import { ProfileEditor } from './ProfileEditor';
 import { LeakModal } from './LeakModal';
 import { BatchCreateModal } from './BatchCreateModal';
+import { useSubscription } from '../cloud/subscription';
+import { FREE_PROFILE_LIMIT } from '../cloud/client';
+import { ActivateDialog } from '../components/ActivateDialog';
 import { messageOf } from '../util';
 
 /**
@@ -68,6 +71,13 @@ export function ProfilesPage({
   const [creating, setCreating] = useState(false);
   const [leakFor, setLeakFor] = useState<ProfileSummary | null>(null);
   const [batching, setBatching] = useState(false);
+  // Free plan is one profile; trial and premium are unlimited. The ceiling is enforced here, at
+  // the only places a profile can come into existence.
+  const subscription = useSubscription();
+  const limitReached = subscription.tier === 'free' && profiles.length >= FREE_PROFILE_LIMIT;
+  const [activateOpen, setActivateOpen] = useState(false);
+  const openCreate = () => (limitReached ? setActivateOpen(true) : setCreating(true));
+  const openBatch = () => (limitReached ? setActivateOpen(true) : setBatching(true));
   const [busy, setBusy] = useState<string>('');
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -81,7 +91,7 @@ export function ProfilesPage({
       input?.focus();
       input?.select();
     };
-    const onNew = () => setCreating(true);
+    const onNew = () => { if (limitReached) setActivateOpen(true); else setCreating(true); };
     const onEscape = () => {
       setSelected(new Set());
       setFilters(EMPTY_FILTERS);
@@ -102,7 +112,7 @@ export function ProfilesPage({
       window.removeEventListener('joe:escape', onEscape);
       window.removeEventListener('joe:focus-profile', onFocusProfile);
     };
-  }, [profiles]);
+  }, [profiles, limitReached]);
 
   const visible = useMemo(() => {
     const needle = filters.query.trim().toLowerCase();
@@ -517,7 +527,7 @@ export function ProfilesPage({
     const running = profile.running || runningById.has(profile.id);
     return [
       running
-        ? { label: t('card.focus'), icon: 'bolt', onClick: () => void open(profile) }
+        ? { label: t('card.focus'), icon: 'play', onClick: () => void open(profile) }
         : { label: t('card.open'), icon: 'play', onClick: () => void open(profile) },
       { label: t('card.rename'), icon: 'name', onClick: () => void rename(profile) },
       { label: t('card.edit'), icon: 'edit', onClick: () => void edit(profile) },
@@ -599,11 +609,11 @@ export function ProfilesPage({
           )}
         />
 
-        <Button variant="soft" icon="layers" onClick={() => setBatching(true)} title={t('btn.batch')}>
+        <Button variant="soft" icon="layers" onClick={openBatch} title={t('btn.batch')}>
           {t('btn.batch')}
         </Button>
 
-        <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>
+        <Button variant="primary" icon="plus" onClick={openCreate}>
           {t('btn.new')}
         </Button>
       </div>
@@ -622,10 +632,10 @@ export function ProfilesPage({
               body={t('empty.sub')}
               action={
                 <div className="cluster" style={{ justifyContent: 'center' }}>
-                  <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>
+                  <Button variant="primary" icon="plus" onClick={openCreate}>
                     {t('empty.action')}
                   </Button>
-                  <Button variant="soft" icon="layers" onClick={() => setBatching(true)}>
+                  <Button variant="soft" icon="layers" onClick={openBatch}>
                     {t('btn.batch')}
                   </Button>
                   <Button variant="ghost" icon="upload" onClick={() => void run('import', async () => {
@@ -661,6 +671,14 @@ export function ProfilesPage({
               setBatching(false);
               await refresh();
             }}
+          />
+        ) : null}
+        {activateOpen ? (
+          <ActivateDialog
+            open={activateOpen}
+            reason="Your free plan includes one profile. Activate a license - or keep your trial - to create as many profiles as you need."
+            onClose={() => setActivateOpen(false)}
+            onActivated={() => void subscription.refresh()}
           />
         ) : null}
         {confirm.dialog}
@@ -897,7 +915,14 @@ export function ProfilesPage({
           }}
         />
       ) : null}
-
+      {activateOpen ? (
+        <ActivateDialog
+          open={activateOpen}
+          reason="Your free plan includes one profile. Activate a license - or keep your trial - to create as many profiles as you need."
+          onClose={() => setActivateOpen(false)}
+          onActivated={() => void subscription.refresh()}
+        />
+      ) : null}
       {confirm.dialog}
     </>
   );

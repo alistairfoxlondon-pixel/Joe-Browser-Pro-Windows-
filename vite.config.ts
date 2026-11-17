@@ -20,7 +20,9 @@ function contentSecurityPolicy(): Plugin {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    // The licensing service is the only remote origin the window may reach: account sign-in and
+    // entitlement reads go through it. Everything else stays on this PC.
+    "connect-src 'self' https://djlmbsaltjqsqpwqdvsg.supabase.co wss://djlmbsaltjqsqpwqdvsg.supabase.co",
     "object-src 'none'",
     "frame-src 'none'",
     "base-uri 'none'",
@@ -48,6 +50,10 @@ function contentSecurityPolicy(): Plugin {
 export default defineConfig({
   root: path.join(root, 'src/renderer'),
   base: './',
+  // Root is src/renderer, so the assets the HTML references (logo.svg, the PWA icons) live one
+  // level up. Without this they are never copied into dist/ and the packaged window shows a
+  // broken icon.
+  publicDir: path.join(root, 'public'),
   plugins: [react(), contentSecurityPolicy()],
   resolve: {
     alias: {
