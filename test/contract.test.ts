@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import * as childProcess from 'node:child_process';
 
 /**
  * Contract tests over the source tree itself.
@@ -162,7 +163,28 @@ test('every language table ends with a closing brace', () => {
 });
 
 test('the entry points the packaged app loads are the ones the build produces', () => {
+  /*
+   * This inspects build output, so it needs a build to have run. It used to assume one had -
+   * which passed locally on a working tree that still had a `dist/` folder and failed on CI,
+   * where `npm test` runs before `npm run build`. A test that depends on a leftover artifact is
+   * a test that reports on the machine, not on the code.
+   *
+   * CI orders build before test so this really checks the output. When it runs on a clean tree,
+   * building here is the honest alternative to skipping: skipping would turn the strongest
+   * packaging check in the suite into a green tick that proves nothing.
+   */
   const pkg = JSON.parse(read('package.json')) as { main: string; version: string };
+
+  if (!fs.existsSync(path.join(root, 'dist/renderer/index.html'))) {
+    // A clean checkout has no dist. Build it rather than skip: the whole point of this test is to
+    // prove the thing that gets packaged is wired correctly, and a skipped version proves nothing.
+    const { execFileSync } = childProcess;
+    execFileSync('npm', ['run', 'build'], {
+      cwd: root,
+      stdio: 'ignore',
+      shell: process.platform === 'win32',
+    });
+  }
 
   // `main` is what Electron starts. If it is wrong the app shows a blank window and nothing else.
   assert.ok(fs.existsSync(path.join(root, pkg.main)), `package.json main does not exist: ${pkg.main}`);
@@ -227,6 +249,12 @@ test('the release workflow builds what it says it publishes', () => {
   assert.ok(tests < packaging, 'tests run after packaging');
   assert.ok(build < packaging, 'the build runs after packaging');
 
+  // The build has to come before the tests, not after. The contract tests inspect build output,
+  // so the other order asks them about a directory that does not exist yet - which is exactly the
+  // failure that broke the first release run on Windows and not on Linux, where a stale `dist/`
+  // from an earlier session made the same suite pass.
+  assert.ok(build < tests, 'the build runs after the tests');
+
   /*
    * The live workflow still hard-codes `v2.0.0`. It cannot be edited from here: the GitHub App
    * that pushes this repository has `contents: write` but not the separate `workflows`
@@ -255,6 +283,10 @@ test('the release workflow builds what it says it publishes', () => {
 
 test('the staged workflow replacement is correct and drops the pinned tag', () => {
   const staged = read('ci/release.yml');
+
+  // The two files must stay identical: one is the source of truth and the other is what GitHub
+  // runs. They drifted once already, and only one of them runs.
+  assert.equal(staged, read('.github/workflows/release.yml'), 'ci/release.yml and the live workflow differ');
 
   // This file is what a maintainer copies to .github/workflows/release.yml. It must not carry
   // the defect it exists to fix.
