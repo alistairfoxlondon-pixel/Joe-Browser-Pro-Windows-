@@ -309,6 +309,7 @@ test('the staged workflow replacement is correct and drops the pinned tag', () =
   // A release that publishes no binaries looks finished and is not.
   assert.match(staged, /fail_on_unmatched_files:\s*true/);
   assert.match(staged, /target_commitish:/);
+  assert.match(staged, /if:\s*\$\{\{ inputs\.publish == true \}\}/, 'publishing must require explicit opt-in');
 
   for (const artifact of ['JoeBrowserSetup.exe', 'JoeBrowser.exe']) {
     assert.ok(staged.includes(artifact), `the staged workflow does not publish ${artifact}`);
