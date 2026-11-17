@@ -289,7 +289,7 @@ export function App(): ReactNode {
                   ? async () => {
                       await cloud().signOut();
                       setAuthUser(null);
-                                setPage('profiles');
+                      setPage('profiles');
                     }
                   : undefined
               }
@@ -320,7 +320,7 @@ export function App(): ReactNode {
                 saveSettings={saveSettings}
                 onSignedOut={() => {
                   setAuthUser(null);
-                      }}
+                }}
               />
             )}
           </main>

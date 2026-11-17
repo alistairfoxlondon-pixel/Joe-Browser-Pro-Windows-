@@ -65,13 +65,12 @@ export function AccountGate({
               <div className="gate-brand-sub">Anti-detect workspace</div>
             </div>
           </div>
-
-
         </div>
       </div>
 
       <div className="gate-form">
         <div className="gate-form-inner">
+          <div className="gate-mobile-brand"><Logo size={40} /><strong>Joe Browser</strong></div>
           <h1 className="gate-title">{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
           {mode === 'register' ? <p className="gate-sub">Confirm your email to continue.</p> : null}
 

@@ -3023,3 +3023,6 @@ p {
 
 .gate-title { margin-bottom: 18px; }
 .gate-title + .gate-sub { margin-top: -12px; }
+
+.gate-mobile-brand { display: none; align-items: center; gap: 10px; margin-bottom: 24px; font-size: 17px; }
+@media (max-width: 940px) { .gate-mobile-brand { display: flex; } }
