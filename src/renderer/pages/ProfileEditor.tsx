@@ -856,7 +856,7 @@ export function ProfileEditor({
                 onChange={(humanPaste) => patchTools({ humanPaste })}
                 label={t('ed.humanpaste')}
                 disabled={firefoxWarning}
-                detail={firefoxWarning ? 'Not available in Firefox profiles.' : 'Types text when you use the standard paste command.'}
+                detail={firefoxWarning ? 'Not available in Firefox profiles.' : 'Use Paste as Human from an editable field’s context menu.'}
               />
               <Field label={t('ed.humanspeed')}>
                 <select

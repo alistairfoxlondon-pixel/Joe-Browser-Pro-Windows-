@@ -1,3 +1,4 @@
+import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
 import type {
   AccountSummary,
   AppInfo,
@@ -373,6 +374,7 @@ const mockLanguages: LanguageInfo[] = [
   { key: 'ko', flag: 'KR', english: 'Korean', native: '한국어', coverage: 45 },
 ];
 
+const mockRemovedShipped = new Set<string>();
 const mockExtensions: ExtensionItem[] = [
   {
     id: 'joe-proxy-guard',
@@ -973,14 +975,9 @@ export const mockBridge: Bridge = {
       customExtensionsEnabled: true,
       firstParty: [],
       library: mockExtensions.map((item) => ({ ...item })),
-      shipped: [
-        { id: 'joe-http-tracker-plus', name: 'HTTP Tracker (included tool)', description: 'Local implementation.', present: true, removed: false },
-        { id: 'joe-right-click-enable', name: 'Right Click and Copy (included tool)', description: 'Local implementation.', present: true, removed: false },
-      ],
-      recommended: [
-        { name: 'uBlock Origin Lite', description: 'Content blocker', url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh', icon: './brand/ublock-origin-lite.png' },
-        { name: 'Bitwarden', description: 'Password manager', url: 'https://chromewebstore.google.com/detail/bitwarden-free-password-m/nngceckbapebfimnlniiiahkandclblb', icon: './brand/bitwarden.png' },
-      ],
+      shipped: INCLUDED_EXTENSIONS.map((item) => ({ ...item, description: '', present: !mockRemovedShipped.has(item.id), removed: mockRemovedShipped.has(item.id) })),
+      recommended: RECOMMENDED_EXTENSIONS,
+
     };
   },
 
@@ -988,7 +985,7 @@ export const mockBridge: Bridge = {
     await delay(400);
     const item: ExtensionItem = {
       id: `ext-${mockExtensions.length + 1}`,
-      name: 'Imported extension',
+      name: RECOMMENDED_EXTENSIONS.find((entry) => entry.url === url)?.name ?? 'Imported extension',
       version: '1.0.0',
       description: url,
       folder: `/extensions/ext-${mockExtensions.length + 1}`,
@@ -996,7 +993,8 @@ export const mockBridge: Bridge = {
       source: 'url',
       storeUrl: url,
       iconPath: '',
-      storeId: '',
+      iconDataUrl: RECOMMENDED_EXTENSIONS.find((entry) => entry.url === url)?.icon,
+      storeId: url.match(/[a-p]{32}/)?.[0] ?? '',
       shipped: false,
       removed: false,
     };
@@ -1024,11 +1022,13 @@ export const mockBridge: Bridge = {
     if (index >= 0) mockExtensions.splice(index, 1);
   },
 
-  async removeShippedExtension(): Promise<void> {
+  async removeShippedExtension(id: string): Promise<void> {
+    mockRemovedShipped.add(id);
     await delay(120);
   },
 
-  async restoreShippedExtension(): Promise<void> {
+  async restoreShippedExtension(id: string): Promise<void> {
+    mockRemovedShipped.delete(id);
     await delay(120);
   },
 

@@ -4,7 +4,7 @@ import { createTheme } from '@mui/material/styles';
  * The Material theme, aligned to the application tokens in styles.css.
  *
  * One primary colour everywhere - the same cobalt the shell uses - flat surfaces, an 8px rhythm,
- * a smaller radius than Material's default, and the Fira Sans stack. No gradients are
+ * a smaller radius than Material's default, and the Inter stack. No gradients are
  * introduced here or anywhere else: elevation is drawn with solid surfaces and hairlines.
  */
 
@@ -14,7 +14,7 @@ const shared = {
   shape: { borderRadius: 8 },
   spacing: 8,
   typography: {
-    fontFamily: `'Fira Sans', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif`,
+    fontFamily: `'Inter', sans-serif`,
     fontSize: 14,
     button: { textTransform: 'none' as const, fontWeight: 600 },
   },

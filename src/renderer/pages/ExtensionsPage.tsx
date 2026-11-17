@@ -3,7 +3,7 @@ import type { AppSettings, ExtensionItem, ExtensionReport } from '../../shared/t
 import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
-import { Button, Chip, EmptyState, Modal, Toggle, useConfirm, useToast } from '../components/UI';
+import { Button, Modal, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
 
 /**
@@ -68,7 +68,6 @@ export function ExtensionsPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('ext.title')}</h1>
-          <div className="sub">{t('ext.sub')}</div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="link" onClick={() => setStoreDialog(true)}>{t('ext.byUrl')}</Button>
@@ -92,13 +91,11 @@ export function ExtensionsPage({
                 checked={settings.extensionsEnabled}
                 onChange={(extensionsEnabled) => void saveSettings({ extensionsEnabled })}
                 label={t('ext.master')}
-                detail={t('ext.master.hint')}
               />
               <Toggle
                 checked={settings.customExtensionsEnabled}
                 onChange={(customExtensionsEnabled) => void saveSettings({ customExtensionsEnabled })}
                 label={t('set.cext')}
-                detail={t('ed.tools.customext.hint')}
               />
             </div>
           </div>
@@ -107,18 +104,15 @@ export function ExtensionsPage({
           <div className="rows">
             {(report?.shipped ?? []).map((item) => (
               <div className="row" key={item.id}>
-                <div className="row-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
-                  <Icon name="extensions" />
-                </div>
+                <div className="row-icon"><img src={item.icon} alt="" /></div>
                 <div className="row-main">
                   <div className="row-title">
                     {item.name}
-                    {item.removed ? <Chip tone="warn">{t('ext.removed')}</Chip> : <Chip tone="ok">{t('ext.included')}</Chip>}
+                    {!item.present && !item.removed ? <span className="ext-state">Not installed</span> : null}
                   </div>
-                  <div className="row-sub">{item.description}</div>
                 </div>
                 <div className="row-actions">
-                  {item.removed ? (
+                  {item.removed || !item.present ? (
                     <Button size="sm" variant="soft" icon="refresh" onClick={() => void act(item.id, () => bridge().restoreShippedExtension(item.id), t('ext.restore'))} busy={busy === item.id}>
                       {t('ext.restore')}
                     </Button>
@@ -146,21 +140,7 @@ export function ExtensionsPage({
 
           <div className="section-label">{t('ext.library')}</div>
           {imported.length === 0 ? (
-            <EmptyState
-              icon="extensions"
-              title={t('ext.empty')}
-              body={t('ext.byUrl.hint')}
-              action={
-                <div className="cluster" style={{ justifyContent: 'center' }}>
-                  <Button variant="primary" icon="link" onClick={() => setStoreDialog(true)}>
-                    {t('ext.byUrl')}
-                  </Button>
-                  <Button variant="soft" icon="folder" onClick={() => void act('folder', () => bridge().addExtensionFolder(), t('ext.addfolder'))}>
-                    {t('ext.addfolder')}
-                  </Button>
-                </div>
-              }
-            />
+            <div className="ext-empty">No added extensions.</div>
           ) : (
             <div className="rows">
               {imported.map((item) => (
@@ -191,16 +171,14 @@ export function ExtensionsPage({
                   <div className="tile-icon">
                     {item.icon ? <img src={item.icon} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} /> : <Icon name="extensions" />}
                   </div>
-                  <Chip tone="muted">{t('ext.store')}</Chip>
                 </div>
                 <div>
                   <div className="tile-title">{item.name}</div>
-                  <div className="tile-desc">{item.description}</div>
                 </div>
                 <div className="tile-foot">
-                  <Button size="sm" variant="soft" icon="download" busy={busy === item.url} disabled={!!busy}
+                  <Button size="sm" variant="soft" icon="download" busy={busy === item.url} disabled={!!busy || library.some((installed) => installed.storeUrl === item.url)}
                     onClick={() => void act(item.url, () => bridge().addExtensionByUrl(item.url), item.name)}>
-                    {t('br.download')}
+                    {library.some((installed) => installed.storeUrl === item.url) ? 'Installed' : t('br.download')}
                   </Button>
                 </div>
               </div>
@@ -214,7 +192,7 @@ export function ExtensionsPage({
         <Modal title={t('ext.byUrl')} onClose={() => setStoreDialog(false)} footer={
           <>
             <Button variant="ghost" onClick={() => setStoreDialog(false)}>{t('btn.cancel')}</Button>
-            <Button variant="primary" busy={busy === 'byUrl'} onClick={() => void act('byUrl', async () => {
+            <Button variant="primary" disabled={!storeUrl.trim() || !!busy} busy={busy === 'byUrl'} onClick={() => void act('byUrl', async () => {
               await bridge().addExtensionByUrl(storeUrl);
               setStoreUrl('');
               setStoreDialog(false);
@@ -250,10 +228,7 @@ function ExtensionRow({
       <div className="row-main">
         <div className="row-title">
           <span className="truncate">{item.name}</span>
-          <Chip tone="muted">{t('ext.version').replace('{v}', item.version)}</Chip>
-          <Chip tone={item.source === 'url' ? 'accent' : 'muted'}>{t(`ext.source.${item.source}`, item.source)}</Chip>
         </div>
-        <div className="row-sub">{item.description || item.folder}</div>
       </div>
       <div className="row-actions">
         {busy ? <span className="spinner" style={{ color: 'var(--accent)' }} /> : null}

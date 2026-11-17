@@ -5,10 +5,10 @@ import { ThemeProvider } from '@mui/material/styles';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { muiTheme } from './theme';
-import '@fontsource/fira-sans/400.css';
-import '@fontsource/fira-sans/500.css';
-import '@fontsource/fira-sans/600.css';
-import '@fontsource/fira-sans/700.css';
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
 import './styles.css';
 
 const container = document.getElementById('root');

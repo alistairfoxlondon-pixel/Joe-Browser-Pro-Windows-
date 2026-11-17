@@ -1,4 +1,3 @@
-import { buildHumanPasteScript } from './humanPaste';
 import type { FingerprintConfig, ToolConfig } from '../../shared/types';
 import { fontsFor } from './fingerprint';
 import { buildIdentity } from './ua';
@@ -30,7 +29,7 @@ export interface InjectPayload {
 }
 
 export function buildFingerprintScript(payload: InjectPayload): string {
-  const { fingerprint: fp, engine, browserVersion, tools } = payload;
+  const { fingerprint: fp, engine, browserVersion } = payload;
   const identity = buildIdentity(engine, browserVersion, fp, fp.seed);
   const fonts = fontsFor(fp.fontSet);
 
@@ -751,9 +750,6 @@ try {
     define(win.Worker.prototype, '__joe', { value: true, enumerable: false, configurable: true });
   }
 } catch(e){}
-
-/* ---- optional built-in human-paced paste ---- */
-${buildHumanPasteScript(tools.humanPaste, tools.humanPasteSpeed)}
 
 /* ---- geolocation agreement ---- */
 try {

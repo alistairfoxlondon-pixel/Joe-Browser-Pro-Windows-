@@ -723,3 +723,17 @@ test('browser build IDs cannot escape the managed kernel directory', async () =>
   }
   assert.equal(resolveKernelExe('chrome-123.0-stable'), null);
 });
+
+test('proxy alerts only on transitions and include old and new IP addresses', async () => {
+  const { ProxyWatchState } = await import('../src/main/core/proxyWatch');
+  const state = new ProxyWatchState('Work');
+  assert.deepEqual(state.success('192.0.2.1', ''), []);
+  assert.equal(state.failure('timeout'), null);
+  assert.match(state.failure('timeout')!.message, /stopped answering/);
+  assert.equal(state.failure('timeout'), null);
+  const notices = state.success('192.0.2.2', 'London');
+  assert.equal(notices.length, 2);
+  assert.match(notices[0]!.message, /answering again/);
+  assert.equal(notices[1]!.detail, '192.0.2.1 → 192.0.2.2');
+  assert.deepEqual(state.success('192.0.2.2', ''), []);
+});

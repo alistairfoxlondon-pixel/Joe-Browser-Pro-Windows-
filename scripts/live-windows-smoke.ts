@@ -5,7 +5,10 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Paths } from '../src/main/core/paths';
 import { listKernels, downloadKernel, resolveKernelExe } from '../src/main/core/catalog';
-import { addFromUrl } from '../src/main/core/library';
+import { addFromUrl, ensureShipped, shippedState } from '../src/main/core/library';
+import { INCLUDED_EXTENSIONS } from '../src/shared/extensionCatalog';
+import { ensureHumanPasteExtension } from '../src/main/core/humanPaste';
+import { chromium } from 'playwright-core';
 
 /** Network-dependent vendor integration check, deliberately separate from offline unit tests. */
 async function main(): Promise<void> {
@@ -13,6 +16,15 @@ async function main(): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'joe-live-test-'));
   process.env.JOE_BROWSER_DATA_DIR = root;
   try {
+    console.log('Installing the two original default extensions');
+    await ensureShipped();
+    const defaults = shippedState();
+    assert.deepEqual(defaults.map((item) => item.id), INCLUDED_EXTENSIONS.map((item) => item.id));
+    for (const item of defaults) {
+      assert.equal(item.present, true, item.name);
+      const manifest = JSON.parse(fs.readFileSync(path.join(Paths.extensions, 'shipped', item.id, 'manifest.json'), 'utf8'));
+      assert.ok(manifest.key, 'The verified publisher key was not preserved');
+    }
     console.log('Installing a signed Chrome Web Store package');
     const url = 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh';
     const extension = await addFromUrl(url);
@@ -30,6 +42,19 @@ async function main(): Promise<void> {
       `--user-data-dir=${path.join(root, 'test-profile')}`, '--dump-dom', 'data:text/html,<title>Joe smoke</title>',
     ], { timeout: 90_000, encoding: 'utf8', windowsHide: true });
     assert.match(output, /Joe smoke/);
+    console.log('Checking Paste as Human extension loads in the managed browser');
+    const paste = ensureHumanPasteExtension('instant');
+    const browser = await chromium.launchPersistentContext(path.join(root, 'extension-profile'), {
+      executablePath: executable, headless: true,
+      args: [`--disable-extensions-except=${paste}`, `--load-extension=${paste}`],
+      timeout: 90_000,
+    });
+    try {
+      const worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 30_000 });
+      assert.match(worker.url(), /^chrome-extension:\/\//);
+      assert.equal(await worker.evaluate(() => typeof chrome.contextMenus), 'object');
+    } finally { await browser.close(); }
+
     console.log('PASS: authenticated store install, Chrome download, extraction, and headless launch.');
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 1000 });

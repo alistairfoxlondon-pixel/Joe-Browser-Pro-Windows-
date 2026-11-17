@@ -370,7 +370,7 @@ export interface ExtensionReport {
   /** Everything in the library. */
   library: ExtensionItem[];
   /** The two included extensions and whether each is present. */
-  shipped: { id: string; name: string; description: string; present: boolean; removed: boolean }[];
+  shipped: { id: string; name: string; description: string; present: boolean; removed: boolean; icon: string }[];
   recommended: { name: string; description: string; url: string; icon: string }[];
 }
 

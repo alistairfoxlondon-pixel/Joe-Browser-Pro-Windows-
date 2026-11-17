@@ -11,9 +11,10 @@ import { buildFingerprintScript } from './inject';
 import { openTunnel, proxyEnabled, upstreamOf, type Upstream } from './proxy';
 import { startRelay, type RelayHandle } from './relay';
 import { proxyPasswordOf, getSettings } from './store';
-import { loadArgs, profileExtensionFolders } from './library';
+import { ensureShipped, loadArgs, profileExtensionFolders } from './library';
 import { log } from './log';
 import { testProxy } from './proxy';
+import { ProxyWatchState } from './proxyWatch';
 import * as history from './history';
 import { resolveKernelExe, installedKernels, compareVersions } from './catalog';
 import { buildIdentity } from './ua';
@@ -33,7 +34,7 @@ import { buildIdentity } from './ua';
  */
 
 export interface SessionOptions {
-  onToast?: (message: string, detail: string) => void;
+  onToast?: (message: string, detail: string, nativeOnly?: boolean) => void;
 }
 
 export class BrowserSession extends EventEmitter {
@@ -47,9 +48,6 @@ export class BrowserSession extends EventEmitter {
   private stamped = new Set<string>();
   private closing = false;
   private watchTimer: NodeJS.Timeout | null = null;
-  private lastExitIp = '';
-  private watchFails = 0;
-  private watchDown = false;
   private debugPort = 0;
   private dataDir: string;
   private readonly options: SessionOptions;
@@ -145,6 +143,12 @@ export class BrowserSession extends EventEmitter {
     // store build that could not be fetched never leaves the tools missing.
     const settings = getSettings();
     const masterEnabled = settings.extensionsEnabled;
+    if (!isFirefox && masterEnabled && settings.customExtensionsEnabled) {
+      try { await ensureShipped(); }
+      catch (error) {
+        this.emit('notice', { kind: 'warn', message: 'Some default extensions could not be installed', detail: error instanceof Error ? error.message : String(error) });
+      }
+    }
     const extensions = isFirefox
       ? []
       : profileExtensionFolders(profile, masterEnabled, settings.customExtensionsEnabled);
@@ -419,55 +423,22 @@ export class BrowserSession extends EventEmitter {
     const password = proxyPasswordOf(profile);
     const config = profile.proxy;
     let busy = false;
-
+    const state = new ProxyWatchState(profile.name);
+    const failure = (detail: string) => {
+      const notice = state.failure(detail);
+      if (notice && !this.closing) this.emit('notice', notice);
+    };
     this.watchTimer = setInterval(() => {
       if (busy || this.closing) return;
       busy = true;
-      void testProxy(config, password, 15000)
-        .then((result) => {
-          if (this.closing) return;
-
-          if (!result.ok) {
-            this.watchFails++;
-            if (this.watchFails >= 2 && !this.watchDown) {
-              this.watchDown = true;
-              this.emit('notice', {
-                kind: 'warn' as const,
-                message: `The proxy for ${profile.name} stopped answering`,
-                detail: result.error,
-              });
-            }
-            return;
-          }
-
-          this.watchFails = 0;
-          if (this.watchDown) {
-            this.watchDown = false;
-            this.emit('notice', {
-              kind: 'success' as const,
-              message: `The proxy for ${profile.name} is answering again`,
-              detail: `${result.ip} · ${result.city || result.country}`,
-            });
-          }
-
-          if (!this.lastExitIp) {
-            this.lastExitIp = result.ip;
-          } else if (result.ip && result.ip !== this.lastExitIp) {
-            // A rotated exit is the one change worth interrupting the user for.
-            this.emit('notice', {
-              kind: 'info' as const,
-              message: `The exit address for ${profile.name} changed`,
-              detail: `${this.lastExitIp} → ${result.ip}`,
-            });
-            this.lastExitIp = result.ip;
-          }
-
-          this.info.exitIp = result.ip;
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          busy = false;
-        });
+      void testProxy(config, password, 15000).then((result) => {
+        if (this.closing) return;
+        if (!result.ok) { failure(result.error); return; }
+        for (const notice of state.success(result.ip, result.city || result.country)) this.emit('notice', notice);
+        this.info.exitIp = result.ip;
+      }).catch((error: unknown) => {
+        failure(error instanceof Error ? error.message : String(error));
+      }).finally(() => { busy = false; });
     }, intervalMs);
 
     // A timer must never be the reason the app cannot quit.
@@ -788,9 +759,10 @@ export class SessionManager {
     this.sessions.set(profile.id, session);
 
     session.on('changed', (info: SessionInfo) => this.events.emit('changed', info));
-    session.on('notice', (notice: { kind: string; message: string; detail: string }) =>
-      this.events.emit('notice', notice),
-    );
+    session.on('notice', (notice: { kind: string; message: string; detail: string }) => {
+      this.events.emit('notice', notice);
+      this.options.onToast?.(notice.message, notice.detail, true);
+    });
     session.on('closed', (profileId: string) => {
       this.sessions.delete(profileId);
       this.events.emit('closed', profileId);

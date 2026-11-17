@@ -27,8 +27,8 @@ let tray: Tray | null = null;
 let quitting = false;
 
 const sessions = new SessionManager({
-  onToast: (message, detail) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
+  onToast: (message, detail, nativeOnly) => {
+    if (!nativeOnly && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('toast', { kind: 'warn', message, detail });
     }
     if (tray) {

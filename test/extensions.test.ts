@@ -101,3 +101,16 @@ test('store downloads reject arbitrary and misleading redirect hosts', async () 
   }
   await assert.rejects(addFromUrl('https://localhost/private.crx'), /official Chrome Web Store/);
 });
+
+test('the original included extensions have fixed IDs and safe removal', async () => {
+  const { shippedState, removeShipped, profileExtensionFolders } = await import('../src/main/core/library');
+  const rows = shippedState();
+  assert.deepEqual(rows.map((item) => item.id), ['fklakbbaaknbgcedidhblbnhclijnhbi', 'okaeekdeohehbdanbbohcfhhlblcmjkm']);
+  assert.equal(rows.every((item) => !item.present && !item.removed && item.icon), true);
+  assert.throws(() => removeShipped('../outside'), /Unknown included extension/);
+  removeShipped(rows[0]!.id);
+  assert.equal(shippedState()[0]!.removed, true);
+  const folders = profileExtensionFolders({ tools: { humanPaste: true, humanPasteSpeed: 'fast', customExtensions: '' } } as never, true, true);
+  assert.equal(folders.some((folder) => folder.includes('human-paste')), true);
+  assert.equal(folders.some((folder) => folder.endsWith(rows[0]!.id)), false);
+});

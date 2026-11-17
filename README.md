@@ -158,7 +158,7 @@ src/main/          the Electron main process
   core/relay.ts         the local SOCKS5/HTTP relay that holds the proxy password
   core/catalog.ts       vendor release channels, install and removal
   core/store.ts         the profile store
-  core/humanPaste.ts    opt-in Chromium paste helper injected by the app
+  core/humanPaste.ts    Chromium context-menu paste extension
   core/history.ts       per-profile history, one JSONL file each
 src/preload/       the only bridge between the UI and the machine
 src/renderer/      the React UI

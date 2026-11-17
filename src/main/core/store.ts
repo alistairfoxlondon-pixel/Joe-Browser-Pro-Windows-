@@ -62,11 +62,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoLockMinutes: 0,
 };
 
-const ACCENTS = ['#4f8cff', '#7c5cff', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4', '#ef4444', '#a855f7'];
+const ACCENTS = ['#2f6bde'];
 
 export function defaultTools(): ToolConfig {
   return {
-    humanPaste: false,
+    humanPaste: true,
     humanPasteSpeed: 'natural',
     proxyWatch: true,
     proxyWatchInterval: 60,

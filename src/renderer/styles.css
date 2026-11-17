@@ -13,8 +13,8 @@
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  --font: 'Fira Sans', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
-  --mono: 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
+  --font: 'Inter', sans-serif;
+  --mono: var(--font);
 
   --r-xs: 4px;
   --r-sm: 6px;
@@ -3014,3 +3014,7 @@ p {
   .header-actions .search { flex: 1 1 100%; }
   .modal-foot { flex-wrap: wrap; }
 }
+
+/* Compact extension manager */
+.ext-state { margin-left: 8px; color: var(--text-3); font-size: 12px; font-weight: 400; }
+.ext-empty { padding: 14px 0; color: var(--text-3); font-size: 13px; }

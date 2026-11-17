@@ -70,6 +70,7 @@ import {
   addFromUrl,
   deleteExtension as deleteLibraryItem,
   libraryReport,
+  ensureShipped,
   removeShipped,
   restoreShipped,
   revealFolder,
@@ -231,6 +232,10 @@ export function registerIpc(context: IpcContext): void {
 
   handle<Profile>('profiles:create', (input: Partial<Profile> & { preserveFingerprint?: boolean }) => {
     const created = createProfile(prepareProfile(input));
+    void ensureShipped().then(() => broadcast('extensions:changed', {})).catch((error: unknown) => {
+      broadcast('toast', { kind: 'warn', message: 'Default extensions could not be installed', detail: error instanceof Error ? error.message : String(error) });
+      broadcast('extensions:changed', {});
+    });
     changed();
     return created;
   });
@@ -726,8 +731,8 @@ export function registerIpc(context: IpcContext): void {
     broadcast('extensions:changed', { at: new Date().toISOString() });
   });
 
-  handle<void>('extensions:restoreShipped', (id: string) => {
-    restoreShipped(id);
+  handle<void>('extensions:restoreShipped', async (id: string) => {
+    await restoreShipped(id);
     broadcast('extensions:changed', { at: new Date().toISOString() });
   });
 

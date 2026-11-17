@@ -8,6 +8,8 @@ import type { ExtensionItem, ExtensionReport, Profile } from '../../shared/types
 import { Paths } from './paths';
 import { readJson, writeJson } from './atomic';
 import { extensionId, storeListingId, verifyStoreCrx } from './storeCrx';
+import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../../shared/extensionCatalog';
+import { ensureHumanPasteExtension } from './humanPaste';
 
 /**
  * Local extension library. Store downloads use Google's update service and are accepted only
@@ -19,29 +21,7 @@ const LIBRARY_FILE = () => Paths.storeFile('extensions.json');
 const IMPORTED_ROOT = () => path.join(Paths.extensions, 'imported');
 const SHIPPED_ROOT = () => path.join(Paths.extensions, 'shipped');
 
-export const SHIPPED_IDS = {
-  tracker: 'joe-http-tracker-plus',
-  rightClick: 'joe-right-click-enable',
-} as const;
-
-const SHIPPED_DEFINITIONS: { id: string; name: string; description: string }[] = [
-  {
-    id: SHIPPED_IDS.tracker,
-    name: 'HTTP Tracker (included tool)',
-    description: 'Local implementation; not the original store extension.',
-  },
-  {
-    id: SHIPPED_IDS.rightClick,
-    name: 'Right Click and Copy (included tool)',
-    description: 'Local implementation; not the original store extension.',
-  },
-];
-
-// Publisher-maintained repository links identify these exact listings.
-const RECOMMENDED = [
-  { name: 'uBlock Origin Lite', description: 'Content blocker', url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh', icon: './brand/ublock-origin-lite.png' },
-  { name: 'Bitwarden', description: 'Password manager', url: 'https://chromewebstore.google.com/detail/bitwarden-free-password-m/nngceckbapebfimnlniiiahkandclblb', icon: './brand/bitwarden.png' },
-];
+export const SHIPPED_IDS = { tracker: INCLUDED_EXTENSIONS[0]!.id, rightClick: INCLUDED_EXTENSIONS[1]!.id };
 
 interface LibraryRow extends ExtensionItem {
   /** For an imported extension, the folder name inside `extensions/imported`. */
@@ -393,102 +373,74 @@ export function setEnabled(id: string, enabled: boolean): ExtensionItem {
 
 /* ------------------------------------------------------------------ shipped pair */
 
-/**
- * The two extensions that ship included. They are written by the app itself on every launch, so
- * they exist on a machine with no network and behind a proxy that blocks the store.
- */
-export function ensureShipped(): void {
-  const root = SHIPPED_ROOT();
-  fs.mkdirSync(root, { recursive: true });
-
-  writeIfChanged(path.join(root, SHIPPED_IDS.tracker), {
-    'manifest.json': JSON.stringify(
-      {
-        manifest_version: 3,
-        name: 'HTTP Tracker Plus',
-        version: '1.0.0',
-        description: 'See the redirect chain, status and hosts of the requests this tab makes.',
-        permissions: ['webRequest', 'storage', 'tabs'],
-        host_permissions: ['<all_urls>'],
-        background: { service_worker: 'service-worker.js' },
-        action: { default_title: 'HTTP Tracker Plus', default_popup: 'popup.html' },
-      },
-      null,
-      2,
-    ),
-    'service-worker.js': TRACKER_WORKER,
-    'popup.html': TRACKER_POPUP_HTML,
-    'popup.js': TRACKER_POPUP_JS,
-  });
-
-  writeIfChanged(path.join(root, SHIPPED_IDS.rightClick), {
-    'manifest.json': JSON.stringify(
-      {
-        manifest_version: 3,
-        name: 'Absolute Enable Right Click and Copy',
-        version: '1.3.0',
-        description: 'Restores the right-click menu, text selection and copy on sites that block them.',
-        permissions: ['storage', 'activeTab', 'scripting', 'tabs'],
-        background: { service_worker: 'service-worker.js' },
-        action: { default_title: 'Absolute Enable Right Click and Copy' },
-        content_scripts: [
-          { matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: true },
-        ],
-      },
-      null,
-      2,
-    ),
-    'service-worker.js': RIGHT_CLICK_WORKER,
-    'content.js': RIGHT_CLICK_CONTENT,
-  });
+/** Download originals, verify their publisher identity, and install atomically. */
+let installingIncluded: Promise<void> | null = null;
+export function ensureShipped(): Promise<void> {
+  if (installingIncluded) return installingIncluded;
+  installingIncluded = (async () => {
+    const failures: string[] = [];
+    for (const definition of INCLUDED_EXTENSIONS) {
+      if (load().removedShipped.includes(definition.id)) continue;
+      const target = path.join(SHIPPED_ROOT(), definition.id);
+      if (fs.existsSync(path.join(target, 'manifest.json'))) continue;
+      const staging = `${target}.staging-${crypto.randomUUID()}`;
+      try {
+        const data = await fetchStorePackage(definition.id);
+        const publicKey = verifyStoreCrx(data, definition.id);
+        const payload = crxPayload(data);
+        if (!payload) throw new Error('Invalid extension package.');
+        unzip(payload, staging);
+        const manifest = readManifest(staging);
+        if (!manifest) throw new Error('The extension has no manifest.');
+        if (manifest.key && storeIdOf(manifest) !== definition.id) throw new Error('Extension identity mismatch.');
+        manifest.key = publicKey.toString('base64');
+        fs.writeFileSync(path.join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
+        // Respect a removal while the download was in flight.
+        if (!load().removedShipped.includes(definition.id)) {
+          fs.mkdirSync(SHIPPED_ROOT(), { recursive: true });
+          fs.rmSync(target, { recursive: true, force: true });
+          fs.renameSync(staging, target);
+        }
+      } catch (error) {
+        failures.push(`${definition.name}: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+    }
+    if (failures.length) throw new Error(failures.join('; '));
+  })().finally(() => { installingIncluded = null; });
+  return installingIncluded;
 }
 
-function writeIfChanged(folder: string, files: Record<string, string>): void {
-  try {
-    fs.mkdirSync(folder, { recursive: true });
-    for (const [name, body] of Object.entries(files)) {
-      const target = path.join(folder, name);
-      let current = '';
-      try {
-        current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
-      } catch {
-        current = '';
-      }
-      if (current !== body) fs.writeFileSync(target, body, 'utf8');
-    }
-  } catch {
-    /* a locked folder leaves that extension out; the app still starts */
-  }
+function included(id: string) {
+  const result = INCLUDED_EXTENSIONS.find((item) => item.id === id);
+  if (!result) throw new Error('Unknown included extension.');
+  return result;
 }
 
 export function removeShipped(id: string): void {
+  included(id);
   const shape = load();
   if (!shape.removedShipped.includes(id)) shape.removedShipped.push(id);
   persist(shape);
-  try {
-    fs.rmSync(path.join(SHIPPED_ROOT(), id), { recursive: true, force: true });
-  } catch {
-    /* the row is recorded as removed even when the folder refuses to go */
-  }
+  fs.rmSync(path.join(SHIPPED_ROOT(), id), { recursive: true, force: true });
 }
 
-export function restoreShipped(id: string): void {
+export async function restoreShipped(id: string): Promise<void> {
+  included(id);
   const shape = load();
   shape.removedShipped = shape.removedShipped.filter((entry) => entry !== id);
   persist(shape);
-  ensureShipped();
+  await ensureShipped();
 }
 
-export function shippedState(): { id: string; name: string; description: string; present: boolean; removed: boolean }[] {
+export function shippedState() {
   const shape = load();
-  return SHIPPED_DEFINITIONS.map((definition) => {
-    const folder = path.join(SHIPPED_ROOT(), definition.id);
-    return {
-      ...definition,
-      present: fs.existsSync(path.join(folder, 'manifest.json')) && !shape.removedShipped.includes(definition.id),
-      removed: shape.removedShipped.includes(definition.id),
-    };
-  });
+  return INCLUDED_EXTENSIONS.map((definition) => ({
+    ...definition, description: '',
+    present: fs.existsSync(path.join(SHIPPED_ROOT(), definition.id, 'manifest.json')) && !shape.removedShipped.includes(definition.id),
+    removed: shape.removedShipped.includes(definition.id),
+  }));
 }
 
 /** Send image bytes, not a file URL that the sandbox and CSP cannot load. */
@@ -507,7 +459,6 @@ function iconDataUrl(file: string, folder: string): string {
 /* ------------------------------------------------------------------ the report */
 
 export function libraryReport(masterEnabled: boolean, customExtensionsEnabled: boolean): ExtensionReport {
-  ensureShipped();
   const shape = load();
 
   const library: ExtensionItem[] = shape.items
@@ -524,7 +475,7 @@ export function libraryReport(masterEnabled: boolean, customExtensionsEnabled: b
     firstParty: [],
     library,
     shipped: shippedState(),
-    recommended: RECOMMENDED.map((entry) => ({
+    recommended: RECOMMENDED_EXTENSIONS.map((entry) => ({
       name: entry.name,
       description: entry.description,
       url: entry.url,
@@ -550,7 +501,7 @@ export function profileExtensionFolders(
   const removed = new Set(shape.removedShipped);
 
   const shipped = customEnabled
-    ? SHIPPED_DEFINITIONS.filter((definition) => !removed.has(definition.id))
+    ? INCLUDED_EXTENSIONS.filter((definition) => !removed.has(definition.id))
         .map((definition) => path.join(SHIPPED_ROOT(), definition.id))
         .filter((folder) => fs.existsSync(path.join(folder, 'manifest.json')))
     : [];
@@ -576,7 +527,8 @@ export function profileExtensionFolders(
 
   // A folder on a command line that contains a comma splits the list, so anything imported is
   // loaded from the app's own root where no path has one.
-  return dedupe([...shipped, ...library, ...manual]);
+  const humanPaste = profile.tools.humanPaste ? [ensureHumanPasteExtension(profile.tools.humanPasteSpeed)] : [];
+  return dedupe([...humanPaste, ...shipped, ...library, ...manual]);
 }
 
 function dedupe(folders: string[]): string[] {
@@ -656,17 +608,21 @@ export function download(url: string, timeoutMs = 30000, redirects = 0): Promise
   });
 }
 
-/** Download and authenticate a package from an official Chrome Web Store listing. */
-export async function addFromUrl(url: string): Promise<{ item: ExtensionItem | null; opened: boolean; message: string }> {
-  const clean = url.trim();
-  const id = storeListingId(clean);
-  if (!id) throw new Error('Enter an official Chrome Web Store extension listing URL.');
+async function fetchStorePackage(id: string): Promise<Buffer> {
   const update = new URL('https://clients2.google.com/service/update2/crx');
   update.searchParams.set('response', 'redirect');
   update.searchParams.set('prodversion', '131.0.6778.0');
   update.searchParams.set('acceptformat', 'crx3');
   update.searchParams.set('x', `id=${id}&installsource=ondemand&uc`);
-  const data = await download(update.toString());
+  return download(update.toString());
+}
+
+/** Download and authenticate a package from an official Chrome Web Store listing. */
+export async function addFromUrl(url: string): Promise<{ item: ExtensionItem | null; opened: boolean; message: string }> {
+  const clean = url.trim();
+  const id = storeListingId(clean);
+  if (!id) throw new Error('Enter an official Chrome Web Store extension listing URL.');
+  const data = await fetchStorePackage(id);
   const publicKey = verifyStoreCrx(data, id);
   fs.mkdirSync(Paths.root, { recursive: true });
   const temp = path.join(Paths.root, `download-${crypto.randomUUID()}.crx`);
@@ -678,120 +634,3 @@ export async function addFromUrl(url: string): Promise<{ item: ExtensionItem | n
     fs.rmSync(temp, { force: true });
   }
 }
-
-/* ------------------------------------------------------------------ sources */
-
-const TRACKER_WORKER = `/* HTTP Tracker Plus - the included edition. No network of its own. */
-const MAX = 300;
-const byTab = new Map();
-
-chrome.webRequest.onCompleted.addListener(
-  (details) => {
-    if (details.tabId < 0) return;
-    const list = byTab.get(details.tabId) || [];
-    const host = (() => { try { return new URL(details.url).host; } catch (e) { return ''; } })();
-    list.push({ url: details.url, host, status: details.statusCode, type: details.type, at: Date.now() });
-    if (list.length > MAX) list.splice(0, list.length - MAX);
-    byTab.set(details.tabId, list);
-    const trackers = list.filter((entry) => isTracker(entry.host)).length;
-    chrome.action.setBadgeText({ tabId: details.tabId, text: String(trackers) });
-    chrome.action.setBadgeBackgroundColor({ tabId: details.tabId, color: '#5B9BF7' });
-  },
-  { urls: ['<all_urls>'] }
-);
-
-chrome.webRequest.onBeforeRedirect.addListener(
-  (details) => {
-    if (details.tabId < 0) return;
-    const list = byTab.get(details.tabId) || [];
-    list.push({ url: details.redirectUrl || details.url, host: (() => { try { return new URL(details.redirectUrl || details.url).host; } catch (e) { return ''; } })(), status: details.statusCode, type: 'redirect', at: Date.now() });
-    byTab.set(details.tabId, list);
-  },
-  { urls: ['<all_urls>'] }
-);
-
-const TRACKERS = ['doubleclick.net','googlesyndication.com','google-analytics.com','googletagmanager.com','facebook.net','connect.facebook.net','scorecardresearch.com','hotjar.com','mixpanel.com','segment.io','criteo.com','taboola.com','outbrain.com','adnxs.com','quantserve.com'];
-function isTracker(host) { return !!host && TRACKERS.some((needle) => host === needle || host.endsWith('.' + needle)); }
-
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (!message || message.type !== 'joe-tracker') return false;
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs && tabs[0];
-    respond({ requests: (tab && byTab.get(tab.id)) || [] });
-  });
-  return true;
-});`;
-
-const TRACKER_POPUP_HTML = `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-body{font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;background:#171a21;color:#e8edf5;width:380px}
-h1{font-size:13px;font-weight:650;margin:0;padding:12px 14px;border-bottom:1px solid #262c37;display:flex;justify-content:space-between}
-h1 span{color:#7c8899;font-weight:500}
-ul{list-style:none;margin:0;padding:0;max-height:420px;overflow:auto}
-li{display:grid;grid-template-columns:34px 1fr;gap:8px;padding:7px 14px;border-bottom:1px solid #1e242e;font-size:12px}
-li b{color:#5B9BF7;font-weight:600}
-li i{display:block;color:#7c8899;font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
-.t{color:#ffb454}
-.empty{padding:26px 14px;color:#7c8899;text-align:center}
-</style></head><body>
-<h1>HTTP Tracker Plus <span id="count"></span></h1>
-<ul id="list"></ul>
-<script src="popup.js"></script>
-</body></html>`;
-
-const TRACKER_POPUP_JS = `const list = document.getElementById('list');
-const count = document.getElementById('count');
-chrome.runtime.sendMessage({ type: 'joe-tracker' }, (response) => {
-  const requests = (response && response.requests) || [];
-  count.textContent = requests.length + ' requests';
-  if (requests.length === 0) {
-    list.innerHTML = '<li class="empty" style="display:block">Nothing recorded on this tab yet.</li>';
-    return;
-  }
-  list.innerHTML = requests.slice().reverse().map((entry) => {
-    const tracker = /doubleclick|googlesyndication|google-analytics|googletagmanager|facebook|hotjar|mixpanel|segment|criteo|taboola|outbrain|adnxs|quantserve/.test(entry.host || '');
-    return '<li><b class="' + (tracker ? 't' : '') + '">' + (entry.status || entry.type) + '</b><div><span class="' + (tracker ? 't' : '') + '">' + String(entry.host) + '</span><i title="' + String(entry.url) + '">' + String(entry.url) + '</i></div></li>';
-  }).join('');
-});`;
-
-const RIGHT_CLICK_WORKER = `/* Absolute Enable Right Click and Copy - the included edition. */
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get({ enabled: true }, (values) => {
-    chrome.action.setBadgeText({ text: values.enabled ? '' : 'off' });
-  });
-});
-
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (message && message.type === 'joe-rc-state') {
-    chrome.storage.local.get({ enabled: true }, (values) => respond({ enabled: values.enabled }));
-    return true;
-  }
-  return false;
-});`;
-
-const RIGHT_CLICK_CONTENT = `(function () {
-  'use strict';
-  if (window.__joeRightClickPlus) return;
-  window.__joeRightClickPlus = true;
-
-  var blocked = ['contextmenu', 'copy', 'cut', 'selectstart', 'dragstart', 'mousedown', 'mouseup', 'keydown', 'keyup', 'paste'];
-  function stop(event) {
-    var key = event.type;
-    if (key === 'keydown' || key === 'keyup') {
-      /* Only the keys a page uses to block copy and dev tools, never ordinary typing. */
-      if (event.key !== 'F12' && !(event.ctrlKey && ['c', 'v', 'x', 'a', 's', 'u', 'p'].indexOf(String(event.key).toLowerCase()) >= 0)) return;
-    }
-    event.stopPropagation();
-  }
-  blocked.forEach(function (type) { window.addEventListener(type, stop, true); });
-
-  var style = document.createElement('style');
-  style.textContent = '*{user-select:text !important;-webkit-user-select:text !important;-moz-user-select:text !important;}' +
-    'html,body{overflow:auto !important}';
-  var attach = function () {
-    if (document.head) document.head.appendChild(style);
-    else if (document.documentElement) document.documentElement.appendChild(style);
-    else document.addEventListener('DOMContentLoaded', attach, { once: true });
-  };
-  attach();
-})();`;

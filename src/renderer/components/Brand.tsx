@@ -34,10 +34,10 @@ export function Wordmark({ height = 34, className }: { height?: number; classNam
         <circle cx="32" cy="32" r="21" fill="none" stroke="#fff" strokeWidth="3" />
         <path d="M29 21h12M37 21v16a8 8 0 0 1-16 0" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
       </g>
-      <text x="112" y="45" fontFamily="'Fira Sans','Segoe UI',system-ui,sans-serif" fontSize="30" fontWeight={700} fill="var(--text, #eef1f6)">
+      <text x="112" y="45" fontFamily="'Inter',sans-serif" fontSize="30" fontWeight={700} fill="var(--text, #eef1f6)">
         Joe Browser
       </text>
-      <text x="112" y="73" fontFamily="'Fira Sans','Segoe UI',system-ui,sans-serif" fontSize="12.5" fontWeight={600} letterSpacing="0.18em" fill="var(--accent, #2f6bde)">
+      <text x="112" y="73" fontFamily="'Inter',sans-serif" fontSize="12.5" fontWeight={600} letterSpacing="0.18em" fill="var(--accent, #2f6bde)">
         ANTI-DETECT BROWSER
       </text>
     </svg>
