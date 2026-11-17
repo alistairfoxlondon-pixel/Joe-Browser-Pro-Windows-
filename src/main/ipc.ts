@@ -320,8 +320,6 @@ export function registerIpc(context: IpcContext): void {
               'CacheStorage',
               'Network\\Cookies',
               'Network\\Cookies-wal',
-              'History',
-              'History-journal',
             ];
 
     let freed = 0;

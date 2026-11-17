@@ -130,6 +130,7 @@ export class BrowserSession extends EventEmitter {
         }
         await this.relay.close();
         this.relay = null;
+        this.info.proxyFellBack = true;
         proxyArg = '';
       }
     }
@@ -417,7 +418,7 @@ export class BrowserSession extends EventEmitter {
    * nobody reads.
    */
   private startProxyWatch(profile: Profile): void {
-    if (!profile.tools.proxyWatch || !proxyEnabled(profile.proxy)) return;
+    if (!profile.tools.proxyWatch || !proxyEnabled(profile.proxy) || this.info.proxyFellBack) return;
 
     const intervalMs = Math.min(600, Math.max(30, profile.tools.proxyWatchInterval)) * 1000;
     const password = proxyPasswordOf(profile);
@@ -665,13 +666,14 @@ export class BrowserSession extends EventEmitter {
       /* the socket is often already gone by the time close is called */
     }
 
-    if (this.child && this.child.exitCode === null) {
+    const child = this.child;
+    if (child && child.exitCode === null && child.signalCode === null) {
       // Give the browser a moment to shut down cleanly so its storage is not left mid-write.
       const deadline = Date.now() + 4000;
-      while (this.child.exitCode === null && Date.now() < deadline) await delay(120);
-      if (this.child.exitCode === null) {
+      while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await delay(120);
+      if (child.exitCode === null && child.signalCode === null) {
         try {
-          this.child.kill();
+          child.kill();
         } catch {
           /* already gone */
         }

@@ -843,3 +843,26 @@ test('clearing a live profile never clears unrelated storage or hides CDP errors
   assert.equal(await session.clearStorage('siteData'), false);
   assert.equal(calls.length, previousCalls);
 });
+
+test('a proxy fallback is reported and never monitored as the active connection', async () => {
+  const net = await import('node:net');
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const upstream = net.createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const port = (upstream.address() as import('node:net').AddressInfo).port;
+  const profile = store.draftProfile({ name: 'Proxy fallback', engine: 'firefox',
+    proxy: { ...normalizeProxy({ type: 'http', host: '127.0.0.1', port }), fallbackDirect: true },
+    tools: { ...store.defaultTools(), proxyWatch: true },
+  });
+  const session = new BrowserSession(profile, async () => ({ exe: process.execPath, engine: 'firefox', version: '1' }));
+  try {
+    const info = await session.start(profile, 'about:blank');
+    assert.equal(info.proxyFellBack, true);
+    assert.equal((session as unknown as { watchTimer: unknown }).watchTimer, null);
+    assert.equal(info.exitIp, '');
+  } finally {
+    await session.stop();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    fs.rmSync((await import('../src/main/core/paths')).Paths.profileData(profile.id), { recursive: true, force: true });
+  }
+});
