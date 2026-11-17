@@ -866,3 +866,30 @@ test('a proxy fallback is reported and never monitored as the active connection'
     fs.rmSync((await import('../src/main/core/paths')).Paths.profileData(profile.id), { recursive: true, force: true });
   }
 });
+
+test('Brave catalog uses exact vendor assets, channel, Chromium version and SHA-256', async () => {
+  const { braveBuildsFromReleases, verifyArchiveSha256 } = await import('../src/main/core/catalog');
+  const crypto = await import('node:crypto');
+  const version = '1.101.50';
+  const name = `brave-v${version}-win32-x64.zip`;
+  const digest = crypto.createHash('sha256').update('trusted').digest('hex');
+  const asset = { name, browser_download_url: `https://github.com/brave/brave-browser/releases/download/v${version}/${name}`, size: 7, digest: `sha256:${digest}` };
+  const release = { name: `Beta v${version} (Chromium 158.0.8127.37)`, tag_name: `v${version}`, assets: [asset] };
+  const rows = braveBuildsFromReleases([release]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.engine, 'brave');
+  assert.equal(rows[0]!.channel, 'beta');
+  assert.equal(rows[0]!.version, version);
+  assert.equal(rows[0]!.runtimeVersion, '158.0.8127.37');
+  assert.equal(rows[0]!.sha256, digest);
+  assert.equal(braveBuildsFromReleases([{ ...release, assets: [{ ...asset, digest: '' }] }]).length, 0);
+  assert.equal(braveBuildsFromReleases([{ ...release, assets: [{ ...asset, browser_download_url: 'https://other.test/file.zip' }] }]).length, 0);
+  assert.equal(braveBuildsFromReleases([{ ...release, name: `Release v${version} (Chromium 158.0.8127.37)`, tag_name: 'v1.2.3' }]).length, 0);
+  const archive = path.join(scratch, 'checksum-test');
+  fs.writeFileSync(archive, 'trusted');
+  try {
+    await verifyArchiveSha256(archive, digest);
+    await assert.rejects(verifyArchiveSha256(archive, '0'.repeat(64)), /integrity/);
+    await assert.rejects(verifyArchiveSha256(archive, 'bad'), /Invalid/);
+  } finally { fs.rmSync(archive, { force: true }); }
+});

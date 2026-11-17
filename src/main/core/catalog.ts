@@ -22,6 +22,7 @@ import { readJson, writeJson } from './atomic';
 
 const CFT_KNOWN_GOOD = 'https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json';
 const CFT_LAST_KNOWN = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json';
+const BRAVE_RELEASES = 'https://api.github.com/repos/brave/brave-browser/releases?per_page=100';
 const MOZILLA_VERSIONS = 'https://product-details.mozilla.org/1.0/firefox_versions.json';
 
 const CACHE_FILE = () => Paths.storeFile('catalog.json');
@@ -200,6 +201,45 @@ async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
   });
 }
 
+interface BraveRelease {
+  draft?: boolean;
+  name?: string;
+  tag_name?: string;
+  assets?: { name?: string; browser_download_url?: string; size?: number; digest?: string }[];
+}
+
+/** Parse only vendor releases with a matching Windows archive and GitHub-provided digest. */
+export function braveBuildsFromReleases(releases: BraveRelease[]): KernelBuild[] {
+  const builds: KernelBuild[] = [];
+  const counts: Record<string, number> = { stable: 0, beta: 0, nightly: 0 };
+  for (const release of releases) {
+    if (release.draft || typeof release.name !== 'string' || typeof release.tag_name !== 'string') continue;
+    const match = /^(Release|Beta|Nightly) v(\d+\.\d+\.\d+) \(Chromium (\d+\.\d+\.\d+\.\d+)\)/i.exec(release.name.trim());
+    if (!match || release.tag_name !== `v${match[2]}`) continue;
+    const channel = match[1]!.toLowerCase() === 'release' ? 'stable' : match[1]!.toLowerCase();
+    if ((counts[channel] ?? 0) >= (channel === 'stable' ? 4 : 2)) continue;
+    const fileName = `brave-v${match[2]}-win32-x64.zip`;
+    const expectedUrl = `https://github.com/brave/brave-browser/releases/download/${release.tag_name}/${fileName}`;
+    const asset = release.assets?.find((item) => item.name === fileName && item.browser_download_url === expectedUrl);
+    const digest = /^sha256:([a-f0-9]{64})$/i.exec(asset?.digest ?? '');
+    if (!asset || !digest || !Number.isSafeInteger(asset.size) || (asset.size ?? 0) <= 0) continue;
+    builds.push({
+      id: buildId('brave', match[2]!, channel), engine: 'brave', channel,
+      version: match[2]!, runtimeVersion: match[3]!, sha256: digest[1]!.toLowerCase(),
+      os: 'win64', downloadUrl: expectedUrl, sizeBytes: asset.size!, installed: false, path: '',
+    });
+    counts[channel] = (counts[channel] ?? 0) + 1;
+  }
+  return builds;
+}
+
+async function fetchBraveBuilds(): Promise<KernelBuild[]> {
+  if (process.platform !== 'win32' || process.arch !== 'x64') return [];
+  const releases = await httpsJson<BraveRelease[]>(BRAVE_RELEASES);
+  if (!Array.isArray(releases)) throw new Error('Could not read Brave release metadata.');
+  return braveBuildsFromReleases(releases);
+}
+
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((n) => Number.parseInt(n, 10) || 0);
   const pb = b.split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -252,8 +292,8 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
 
   if (!fresh || forceRefresh || builds.length === 0) {
     const gathered: KernelBuild[] = [];
-    const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds()]);
-    const sourceEngines = [['chrome', 'chromium'], ['firefox']];
+    const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds(), fetchBraveBuilds()]);
+    const sourceEngines = [['chrome', 'chromium'], ['firefox'], ['brave']];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') gathered.push(...result.value);
       else gathered.push(...builds.filter((build) => sourceEngines[index]?.includes(build.engine)));
@@ -313,7 +353,11 @@ export async function downloadKernel(
 
   const staging = `${targetDir}.staging-${crypto.randomUUID()}`;
   try {
+    if (build.engine === 'brave' && !/^[a-f0-9]{64}$/i.test(build.sha256 ?? '')) {
+      throw new Error('Brave release integrity information is missing. Refresh the browser catalog.');
+    }
     await downloadFile(build.downloadUrl, archivePath, onProgress);
+    if (build.sha256) await verifyArchiveSha256(archivePath, build.sha256);
     fs.mkdirSync(staging, { recursive: true });
     await extract(archivePath, staging);
     const exePath = locateLauncher(staging, build.engine);
@@ -321,7 +365,7 @@ export async function downloadKernel(
     const meta: InstalledKernel = {
       id: build.id, engine: build.engine, version: build.version,
       path: targetDir, exePath: path.join(targetDir, path.relative(staging, exePath)),
-      installedAt: new Date().toISOString(),
+      runtimeVersion: build.runtimeVersion, installedAt: new Date().toISOString(),
     };
     fs.writeFileSync(path.join(staging, 'kernel.json'), JSON.stringify(meta, null, 2), 'utf8');
     // Do not delete a competing install. A second download can be safely retried.
@@ -332,6 +376,14 @@ export async function downloadKernel(
     fs.rmSync(staging, { recursive: true, force: true });
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+export async function verifyArchiveSha256(file: string, expected: string): Promise<void> {
+  if (!/^[a-f0-9]{64}$/i.test(expected)) throw new Error('Invalid archive integrity information.');
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  const actual = hash.digest('hex');
+  if (actual !== expected.toLowerCase()) throw new Error('The browser archive failed its SHA-256 integrity check.');
 }
 
 function archiveNameFor(build: KernelBuild): string {
@@ -432,7 +484,9 @@ function extract(archive: string, into: string): Promise<void> {
 
 function locateLauncher(root: string, engine: string): string | null {
   const names =
-    engine === 'firefox'
+    engine === 'brave'
+      ? ['brave.exe']
+      : engine === 'firefox'
       ? ['firefox.exe', 'firefox']
       : engine === 'chromium'
         ? ['chrome.exe', 'chromium', 'Chromium']

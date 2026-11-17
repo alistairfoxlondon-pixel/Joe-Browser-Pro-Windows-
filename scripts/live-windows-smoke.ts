@@ -42,6 +42,18 @@ async function main(): Promise<void> {
       `--user-data-dir=${path.join(root, 'test-profile')}`, '--dump-dom', 'data:text/html,<title>Joe smoke</title>',
     ], { timeout: 90_000, encoding: 'utf8', windowsHide: true });
     assert.match(output, /Joe smoke/);
+    console.log('Downloading and launching a verified app-managed Brave build');
+    const brave = builds.find((entry) => entry.engine === 'brave' && entry.channel === 'stable');
+    assert.ok(brave?.sha256 && brave.runtimeVersion, 'No verified Brave stable build was found');
+    const braveInstall = await downloadKernel(brave, () => {});
+    assert.equal(braveInstall.runtimeVersion, brave.runtimeVersion);
+    const braveExe = resolveKernelExe(braveInstall.id);
+    assert.ok(braveExe && path.basename(braveExe).toLowerCase() === 'brave.exe');
+    const braveOutput = execFileSync(braveExe, [
+      '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+      `--user-data-dir=${path.join(root, 'brave-profile')}`, '--dump-dom', 'data:text/html,<title>Brave smoke</title>',
+    ], { timeout: 90_000, encoding: 'utf8', windowsHide: true });
+    assert.match(braveOutput, /Brave smoke/);
     console.log('Checking Paste as Human extension loads in the managed browser');
     const paste = ensureHumanPasteExtension('instant');
     const browser = await chromium.launchPersistentContext(path.join(root, 'extension-profile'), {
@@ -55,7 +67,7 @@ async function main(): Promise<void> {
       assert.equal(await worker.evaluate(() => typeof chrome.contextMenus), 'object');
     } finally { await browser.close(); }
 
-    console.log('PASS: authenticated store install, Chrome download, extraction, and headless launch.');
+    console.log('PASS: authenticated store install, Chrome and Brave download, extraction, and headless launch.');
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 1000 });
   }

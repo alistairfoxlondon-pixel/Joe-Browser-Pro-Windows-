@@ -183,6 +183,10 @@ export interface KernelBuild {
   /** 'Microsoft Windows' etc, shown on the card. */
   os: string;
   downloadUrl: string;
+  /** Vendor-provided SHA-256 for a verified archive, when available. */
+  sha256?: string;
+  /** Underlying browser engine version when it differs from the product version. */
+  runtimeVersion?: string;
   installed: boolean;
   /** Populated once installed. */
   path: string;
@@ -195,6 +199,7 @@ export interface InstalledKernel {
   version: string;
   path: string;
   exePath: string;
+  runtimeVersion?: string;
   installedAt: string;
 }
 

@@ -54,7 +54,7 @@ export class BrowserSession extends EventEmitter {
 
   constructor(
     profile: Profile,
-    exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string }>,
+    exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }>,
     options: SessionOptions = {},
   ) {
     super();
@@ -77,7 +77,7 @@ export class BrowserSession extends EventEmitter {
     };
   }
 
-  private readonly exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string }>;
+  private readonly exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }>;
 
   get running(): boolean {
     return this.child !== null && this.info.state !== 'stopped' && this.info.state !== 'failed';
@@ -92,7 +92,7 @@ export class BrowserSession extends EventEmitter {
 
     const identity = buildIdentity(
       engine,
-      target.version || profile.browserVersion,
+      target.runtimeVersion || target.version || profile.browserVersion,
       profile.fingerprint,
       profile.fingerprint.seed,
     );
@@ -169,7 +169,7 @@ export class BrowserSession extends EventEmitter {
     this.injectScript = buildFingerprintScript({
       fingerprint: profile.fingerprint,
       engine,
-      browserVersion: target.version || profile.browserVersion,
+      browserVersion: target.runtimeVersion || target.version || profile.browserVersion,
       tools: profile.tools,
       countryCode: profile.proxy.lastCountryCode,
     });
@@ -801,18 +801,18 @@ export class SessionManager {
 }
 
 /** Resolve only app-managed builds; never silently substitute an installed system browser. */
-async function resolveExecutable(profile: Profile): Promise<{ exe: string; engine: string; version: string }> {
+async function resolveExecutable(profile: Profile): Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }> {
   if (profile.kernelId) {
     const build = installedKernels().find((item) => item.id === profile.kernelId && item.engine === profile.engine);
     const exe = build && resolveKernelExe(build.id);
-    if (build && exe) return { exe, engine: build.engine, version: build.version };
+    if (build && exe) return { exe, engine: build.engine, version: build.version, runtimeVersion: build.runtimeVersion };
     throw new Error(`The selected ${profile.engine} build is not installed. Install it from the Browsers page.`);
   }
   const builds = installedKernels().filter((item) => item.engine === profile.engine)
     .sort((a, b) => compareVersions(b.version, a.version));
   for (const build of builds) {
     const exe = resolveKernelExe(build.id);
-    if (exe) return { exe, engine: build.engine, version: build.version };
+    if (exe) return { exe, engine: build.engine, version: build.version, runtimeVersion: build.runtimeVersion };
   }
   throw new Error(`No app-managed ${profile.engine} build is installed. Install one from the Browsers page.`);
 }
