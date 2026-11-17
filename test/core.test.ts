@@ -885,6 +885,7 @@ test('Brave catalog uses exact vendor assets, channel, Chromium version and SHA-
   assert.equal(braveBuildsFromReleases([{ ...release, assets: [{ ...asset, digest: '' }] }]).length, 0);
   assert.equal(braveBuildsFromReleases([{ ...release, assets: [{ ...asset, browser_download_url: 'https://other.test/file.zip' }] }]).length, 0);
   assert.equal(braveBuildsFromReleases([{ ...release, name: `Release v${version} (Chromium 158.0.8127.37)`, tag_name: 'v1.2.3' }]).length, 0);
+  assert.equal(braveBuildsFromReleases([{ ...release, name: `Release v${version} (Chromium 158.0.8127.37)`, prerelease: true }]).length, 0);
   const archive = path.join(scratch, 'checksum-test');
   fs.writeFileSync(archive, 'trusted');
   try {

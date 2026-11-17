@@ -203,6 +203,7 @@ async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
 
 interface BraveRelease {
   draft?: boolean;
+  prerelease?: boolean;
   name?: string;
   tag_name?: string;
   assets?: { name?: string; browser_download_url?: string; size?: number; digest?: string }[];
@@ -217,6 +218,8 @@ export function braveBuildsFromReleases(releases: BraveRelease[]): KernelBuild[]
     const match = /^(Release|Beta|Nightly) v(\d+\.\d+\.\d+) \(Chromium (\d+\.\d+\.\d+\.\d+)\)/i.exec(release.name.trim());
     if (!match || release.tag_name !== `v${match[2]}`) continue;
     const channel = match[1]!.toLowerCase() === 'release' ? 'stable' : match[1]!.toLowerCase();
+    // Brave can publish release-channel candidates as GitHub prereleases before shipping.
+    if (channel === 'stable' && release.prerelease) continue;
     if ((counts[channel] ?? 0) >= (channel === 'stable' ? 4 : 2)) continue;
     const fileName = `brave-v${match[2]}-win32-x64.zip`;
     const expectedUrl = `https://github.com/brave/brave-browser/releases/download/${release.tag_name}/${fileName}`;
