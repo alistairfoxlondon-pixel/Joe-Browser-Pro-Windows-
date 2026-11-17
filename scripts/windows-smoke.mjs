@@ -90,7 +90,7 @@ try {
   for (const width of [1100, 520]) {
     await page.setViewportSize({ width, height: 760 });
     for (const tab of ['General', 'Fingerprint', 'Privacy', 'Proxy', 'Tools']) {
-      await editor.getByRole('tab', { name: tab }).click();
+      await editor.getByRole('tab', { name: tab, exact: true }).click();
       const overflow = await editor.evaluate(el => {
         const body = el.querySelector('.modal-body');
         return el.scrollWidth > el.clientWidth + 1 || body.scrollWidth > body.clientWidth + 1;
