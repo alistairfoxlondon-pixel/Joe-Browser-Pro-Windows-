@@ -32,7 +32,30 @@ jobs:
       # The gates the release depends on. If any of these fails, no artifact is published:
       # typecheck both projects, the whole suite, and a production build.
       - run: npm run typecheck
-      - run: npm test
+      # Windows behaves differently from the Linux images these tests were written on. When a
+      # test fails here and not locally, the assertion is what is needed, so the run uploads the
+      # full output rather than just its exit code.
+      - name: Run the tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.txt
+      - name: Show the failure
+        if: failure()
+        shell: bash
+        run: |
+          # Printed as a workflow error annotation, because the job log is served from a host
+          # that is not reachable from the machine that dispatches these runs. An annotation is
+          # readable through the check-runs API.
+          detail=$(grep -nE "not ok|AssertionError|Expected|actual:|expected:|Error:" test-output.txt | head -40 || true)
+          echo "::error title=TEST OUTPUT::$(printf '%s' "$detail" | tr '\n' '|' | cut -c1-6000)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-output
+          path: test-output.txt
+          retention-days: 3
+          if-no-files-found: ignore
       - run: npm run build
 
       - name: Read the version
