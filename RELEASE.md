@@ -4,6 +4,35 @@ The pipeline is `.github/workflows/release.yml`. It runs on a Windows runner, bu
 binaries, and attaches them to a GitHub release. It has produced a working release before
 (`v2.0.0`, 16 November 2026), so nothing here is theoretical.
 
+## One thing to do before the next release
+
+The live workflow at `.github/workflows/release.yml` still hard-codes `tag_name: v2.0.0`. A second
+dispatch would therefore overwrite the `v2.0.0` release instead of creating `v2.1.0`.
+
+The corrected workflow is **already written** at `release/ci/release.yml`. It cannot be moved into
+place from an automated session: the GitHub App that pushes this repository has `contents: write`
+but not the separate **`workflows`** permission, so any push or API write touching
+`.github/workflows/` is refused with
+
+```
+refusing to allow a GitHub App to create or update workflow
+`.github/workflows/release.yml` without `workflows` permission
+```
+
+This is the same boundary the earlier `ci/` workaround was built around. It affects only workflow
+files; every other file in this repository pushes normally.
+
+**The one-minute fix, for a human with the repository open:**
+
+1. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/release/ci/release.yml
+2. Copy the file's contents.
+3. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/.github/workflows/release.yml
+4. Replace its contents, commit to `main`.
+
+`npm test` proves the staged file is correct and fails if it drifts from what it must contain
+(`test/contract.test.ts` → *the staged workflow replacement is correct*). It also fails if the
+staged file is deleted while the live one still pins a tag.
+
 ## Cutting a release
 
 1. **Bump the version** in `package.json`. Nothing else carries a version: the installer name,
@@ -21,8 +50,9 @@ binaries, and attaches them to a GitHub release. It has produced a working relea
    Actions -> Build EXE -> Run workflow -> Run
    ```
 
-   Leave the tag field empty. It defaults to `v<package.json version>`, which is what you want;
-   the input exists for re-publishing a tag that failed halfway.
+   With the staged workflow in place, leave the tag field empty: it defaults to
+   `v<package.json version>`. If the pinned workflow is still live, pass the tag explicitly —
+   `v2.1.0` — because otherwise it defaults to `v2.0.0` and overwrites that release.
 
 4. **Wait about two minutes.** The run typechecks, tests, builds, packages, and publishes. It
    fails rather than publishing if any of those steps fail, or if either `.exe` is missing.

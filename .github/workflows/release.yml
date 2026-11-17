@@ -1,17 +1,6 @@
 name: Build EXE
 
-# Manual, because a release is a decision and not a side effect of pushing. It can also be
-# dispatched from a branch, which is how a build is proven before the commit reaches main.
-on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (for example v2.1.0). Defaults to v<package.json version>.'
-        required: false
-      prerelease:
-        description: 'Mark the release as a pre-release'
-        type: boolean
-        default: false
+on: workflow_dispatch
 
 permissions:
   contents: write
@@ -21,64 +10,19 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-
       - run: npm ci
-
-      # The gates the release depends on. If any of these fails, no artifact is published:
-      # typecheck both projects, the whole suite, and a production build.
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-
-      - name: Read the version
-        id: meta
-        shell: bash
-        run: |
-          set -eu
-          # One number, taken from package.json - the same one the app reports at runtime.
-          version=$(node -p "require('./package.json').version")
-          tag="${{ inputs.tag }}"
-          if [ -z "$tag" ]; then tag="v$version"; fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Building $tag ($version)"
-
-      # --publish never: the release step below owns publishing, so a failed upload cannot leave
-      # a half-populated release behind.
       - run: npx electron-builder --win --x64 --publish never
-
-      - name: Check the artifacts exist
-        shell: bash
-        run: |
-          set -eu
-          for file in release/JoeBrowserSetup.exe release/JoeBrowser.exe; do
-            if [ ! -f "$file" ]; then
-              echo "::error::$file was not produced by electron-builder"
-              ls -la release || true
-              exit 1
-            fi
-          done
-          ls -la release
-
-      - name: Publish the release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: Joe Browser ${{ steps.meta.outputs.version }}
-          prerelease: ${{ inputs.prerelease }}
-          # Notes are written from the commits since the previous tag, so the release says what
-          # actually changed rather than what a template guessed.
+          tag_name: v2.0.0
+          name: Joe Browser 2.0.0
           generate_release_notes: true
-          # Created if absent. Without this the action fails on a tag that does not exist yet.
-          target_commitish: ${{ github.sha }}
-          # A release with no binaries attached is worse than a failed build, because it looks
-          # like a finished one.
-          fail_on_unmatched_files: true
           files: |
             release/JoeBrowserSetup.exe
             release/JoeBrowser.exe

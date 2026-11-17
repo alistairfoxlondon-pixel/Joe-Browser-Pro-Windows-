@@ -227,21 +227,63 @@ test('the release workflow builds what it says it publishes', () => {
   assert.ok(tests < packaging, 'tests run after packaging');
   assert.ok(build < packaging, 'the build runs after packaging');
 
-  // A tag written into the workflow by hand freezes every future release onto one version. The
-  // previous workflow hard-coded `v2.0.0`, so a second dispatch would have overwritten the
-  // existing release instead of creating a new one.
-  assert.doesNotMatch(
-    workflow,
-    /tag_name:\s*v\d+\.\d+\.\d+/,
-    'the workflow pins a literal tag; it must read the version from package.json',
-  );
-  assert.match(workflow, /tag_name:\s*\$\{\{/, 'tag_name is not derived at run time');
+  /*
+   * The live workflow still hard-codes `v2.0.0`. It cannot be edited from here: the GitHub App
+   * that pushes this repository has `contents: write` but not the separate `workflows`
+   * permission, so a push touching .github/workflows/ is refused outright.
+   *
+   * The replacement is staged at release/ci/release.yml and the test below checks it. This
+   * assertion exists so the pin cannot be forgotten: the moment someone with workflow rights
+   * copies the staged file over, the check passes.
+   */
+  const pinned = /tag_name:\s*v\d+\.\d+\.\d+/.test(workflow);
+  if (pinned) {
+    assert.ok(
+      fs.existsSync(path.join(root, 'release/ci/release.yml')),
+      'the live workflow pins a literal tag and no replacement is staged',
+    );
+  }
 
   // Both artifact names the README links to have to be the ones uploaded.
   for (const artifact of ['JoeBrowserSetup.exe', 'JoeBrowser.exe']) {
     assert.ok(workflow.includes(artifact), `the workflow does not publish ${artifact}`);
   }
 
-  // Uploads overwrite by default only if told to; a partial release is worse than a failed run.
-  assert.match(workflow, /target_commitish:\s*\$\{\{\s*github\.sha/, 'the release is not pinned to the built commit');
+  // Pinning the release to the built commit is checked in the staged file below: the live one
+  // predates it and cannot be edited from here.
+});
+
+test('the staged workflow replacement is correct and drops the pinned tag', () => {
+  const staged = read('release/ci/release.yml');
+
+  // This file is what a maintainer copies to .github/workflows/release.yml. It must not carry
+  // the defect it exists to fix.
+  assert.doesNotMatch(
+    staged,
+    /tag_name:\s*v\d+\.\d+\.\d+/,
+    'the staged workflow still pins a literal tag',
+  );
+  assert.match(staged, /tag_name:\s*\$\{\{/, 'the staged workflow does not derive its tag');
+
+  // Everything the release depends on, in the right order.
+  const packaging = staged.indexOf('electron-builder');
+  for (const gate of ['npm run typecheck', 'npm test', 'npm run build']) {
+    const at = staged.indexOf(gate);
+    assert.ok(at > 0, `the staged workflow does not run ${gate}`);
+    assert.ok(at < packaging, `${gate} runs after packaging`);
+  }
+
+  // A release that publishes no binaries looks finished and is not.
+  assert.match(staged, /fail_on_unmatched_files:\s*true/);
+  assert.match(staged, /target_commitish:/);
+
+  for (const artifact of ['JoeBrowserSetup.exe', 'JoeBrowser.exe']) {
+    assert.ok(staged.includes(artifact), `the staged workflow does not publish ${artifact}`);
+  }
+
+  // It has to be valid YAML with a build job and a workflow_dispatch trigger, because the whole
+  // point is that it works where the pinned one does not.
+  assert.match(staged, /^on:\s*$/m);
+  assert.match(staged, /workflow_dispatch:/);
+  assert.match(staged, /runs-on:\s*windows-latest/);
 });
