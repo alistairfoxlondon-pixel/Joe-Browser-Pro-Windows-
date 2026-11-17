@@ -52,11 +52,15 @@ async function main(): Promise<void> {
     assert.equal(braveInstall.runtimeVersion, brave.runtimeVersion);
     const braveExe = resolveKernelExe(braveInstall.id);
     assert.ok(braveExe && path.basename(braveExe).toLowerCase() === 'brave.exe');
-    const braveOutput = execFileSync(braveExe, [
-      '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-      `--user-data-dir=${path.join(root, 'brave-profile')}`, '--dump-dom', 'data:text/html,<title>Brave smoke</title>',
-    ], { timeout: 90_000, encoding: 'utf8', windowsHide: true });
-    assert.match(braveOutput, /Brave smoke/);
+    const braveContext = await chromium.launchPersistentContext(path.join(root, 'brave-profile'), {
+      executablePath: braveExe, headless: true, timeout: 45_000,
+      args: ['--no-first-run', '--no-default-browser-check'],
+    });
+    try {
+      const page = braveContext.pages()[0] ?? await braveContext.newPage();
+      await page.goto('data:text/html,<title>Brave smoke</title>');
+      assert.equal(await page.title(), 'Brave smoke');
+    } finally { await braveContext.close(); }
     console.log('Checking Paste as Human extension loads in the managed browser');
     const paste = ensureHumanPasteExtension('instant');
     const browser = await chromium.launchPersistentContext(path.join(root, 'extension-profile'), {
