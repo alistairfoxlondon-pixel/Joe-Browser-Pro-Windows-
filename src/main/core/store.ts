@@ -249,6 +249,7 @@ export function draftProfile(input: CreateProfileInput): Profile {
   const profile = sanitizeProfile({
     ...(input as Profile),
     engine: engineFor(input),
+    startUrl: input.startUrl || getSettings().startPage || DEFAULT_SETTINGS.startPage,
     kernelId,
     id: crypto.randomUUID(),
     name,

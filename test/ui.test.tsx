@@ -1064,3 +1064,20 @@ test('proxy country label and circular flag use the same country code', async ()
     assert.ok(!row.querySelector('.fi-gb'));
   } finally { mockBridge.listProxies = original; await teardown(); }
 });
+
+test('a session that fell back to direct shows the direct location rather than the proxy location', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const profile = { ...profiles[0]!, locationKey: 'proxy-route', hasProxy: true };
+  const original = mockBridge.getProfileLocation;
+  mockBridge.getProfileLocation = async () => ({ key: 'direct', ok: true, country: 'United Kingdom', countryCode: 'GB' });
+  const session = { profileId: profile.id, profileName: profile.name, state: 'running', debugPort: 0, pid: 0, engine: profile.engine, browserVersion: profile.browserVersion, startedAt: '', exitIp: '', lastError: '', proxyFellBack: true } as const;
+  try {
+    await render(hosted(React.createElement(ProfilesPage, { profiles: [profile], runningById: new Map([[profile.id, session]]), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+    const card = container.querySelector('[data-profile-card]')!;
+    assert.ok(card.querySelector('.fi-gb'));
+    assert.ok(card.textContent?.includes('United Kingdom'));
+    assert.ok(card.textContent?.includes('Direct'));
+  } finally { mockBridge.getProfileLocation = original; await teardown(); }
+});

@@ -308,7 +308,10 @@ export class BrowserSession extends EventEmitter {
 
   private async attachCDP(engine: string): Promise<void> {
     try {
-      this.cdp = await CdpClient.connect(this.debugPort, 30000);
+      const connection = await CdpClient.connect(this.debugPort, 30000);
+      if (this.closing) { connection.close(); return; }
+      this.cdp = connection;
+      const autoAttached = new Set<string>();
 
       // Every document request in this profile is one history entry. Network.requestWillBeSent
       // fires before the request leaves, so a navigation that is later blocked still appears.
@@ -332,6 +335,7 @@ export class BrowserSession extends EventEmitter {
       this.cdp.on('Target.attachedToTarget', (params, _sessionId) => {
         const sessionId = String(params['sessionId'] ?? '');
         const targetInfo = (params['targetInfo'] as { type?: string; targetId?: string } | undefined) ?? {};
+        if (targetInfo.targetId) autoAttached.add(targetInfo.targetId);
         void this.stampTarget(sessionId, targetInfo.type ?? 'page', engine);
       });
 
@@ -350,7 +354,7 @@ export class BrowserSession extends EventEmitter {
         .catch(() => ({ targetInfos: [] }));
 
       for (const target of existing.targetInfos ?? []) {
-        if (target.type !== 'page') continue;
+        if (target.type !== 'page' || autoAttached.has(target.targetId)) continue;
         try {
           const attached = await this.cdp.send<{ sessionId: string }>('Target.attachToTarget', {
             targetId: target.targetId,

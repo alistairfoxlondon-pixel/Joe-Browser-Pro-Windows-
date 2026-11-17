@@ -82,7 +82,8 @@ export function ProfilesPage({
   const searchRef = useRef<HTMLDivElement>(null);
 
   const [locations, setLocations] = useState<Record<string, ProfileLocation>>({});
-  const locationInputs = JSON.stringify(profiles.map(({ id, locationKey }) => [id, locationKey]));
+  const locationKeyFor = (profile: ProfileSummary) => runningById.get(profile.id)?.proxyFellBack ? 'direct' : profile.locationKey;
+  const locationInputs = JSON.stringify(profiles.map((profile) => [profile.id, locationKeyFor(profile)]));
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -158,7 +159,7 @@ export function ProfilesPage({
         profile.timezone,
         profile.proxyLabel,
         profile.proxyCountry,
-        locations[profile.id]?.key === profile.locationKey ? locations[profile.id]?.country : '',
+        locations[profile.id]?.key === locationKeyFor(profile) ? locations[profile.id]?.country : '',
         profile.notes,
         profile.status,
         profile.signature,
@@ -770,7 +771,7 @@ export function ProfilesPage({
                 <ProfileRow
                   key={profile.id}
                   profile={profile}
-                  location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
+                  location={locations[profile.id]?.key === locationKeyFor(profile) ? locations[profile.id] : undefined}
                   session={runningById.get(profile.id)}
                   selected={selected.has(profile.id)}
                   onSelect={() => toggleSelection(profile.id)}
@@ -786,7 +787,7 @@ export function ProfilesPage({
                 <ProfileCard
                   key={profile.id}
                   profile={profile}
-                  location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
+                  location={locations[profile.id]?.key === locationKeyFor(profile) ? locations[profile.id] : undefined}
                   session={runningById.get(profile.id)}
                   selected={selected.has(profile.id)}
                   onSelect={() => toggleSelection(profile.id)}

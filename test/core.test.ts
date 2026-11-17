@@ -763,6 +763,10 @@ test('profile country lookup uses the configured connection and never falls back
   assert.equal(results[2]!.countryCode, 'DE');
   assert.equal(directCount, 1);
   assert.equal(proxyCount, 1);
+  const fallback = await service.locate(proxy, true);
+  assert.equal(fallback.key, 'direct');
+  assert.equal(fallback.countryCode, 'GB');
+  assert.equal(directCount, 1);
   await service.locate(proxy);
   assert.equal(proxyCount, 1);
   now = 300_001;
@@ -941,8 +945,8 @@ test('CDP event listeners are active before auto-attach can pause a target', asy
     on(method: string, handler: (params: Record<string, unknown>, id: string) => void) { listeners.set(method, handler); return () => {}; },
     async send(method: string) {
       calls.push(method);
-      if (method === 'Target.setAutoAttach') listeners.get('Target.attachedToTarget')?.({ sessionId: 'early', targetInfo: { type: 'page' } }, '');
-      if (method === 'Target.getTargets') return { targetInfos: [] };
+      if (method === 'Target.setAutoAttach') listeners.get('Target.attachedToTarget')?.({ sessionId: 'early', targetInfo: { type: 'page', targetId: 'target-1' } }, '');
+      if (method === 'Target.getTargets') return { targetInfos: [{ type: 'page', targetId: 'target-1' }] };
       return {};
     },
   };
@@ -953,5 +957,16 @@ test('CDP event listeners are active before auto-attach can pause a target', asy
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(calls.includes('Page.addScriptToEvaluateOnNewDocument'));
     assert.ok(calls.includes('Runtime.runIfWaitingForDebugger'));
+    assert.ok(!calls.includes('Target.attachToTarget'), 'an auto-attached target must not be attached twice');
   } finally { CdpClient.connect = original; }
+});
+
+test('new profiles honor the configured start page and preserve explicit URLs', () => {
+  const before = store.getSettings().startPage;
+  try {
+    assert.equal(store.DEFAULT_SETTINGS.startPage, 'https://browsercan.net');
+    store.saveSettings({ startPage: 'https://start.example/' });
+    assert.equal(store.draftProfile({ name: 'Default start' }).startUrl, 'https://start.example/');
+    assert.equal(store.draftProfile({ name: 'Custom start', startUrl: 'https://custom.example/' }).startUrl, 'https://custom.example/');
+  } finally { store.saveSettings({ startPage: before }); }
 });

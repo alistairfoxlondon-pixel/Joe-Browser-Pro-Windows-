@@ -216,7 +216,7 @@ export function registerIpc(context: IpcContext): void {
   handle('profiles:location', async (id: string) => {
     const profile = findProfile(id);
     if (!profile) throw new Error('That profile no longer exists.');
-    return profileLocations.locate(profile);
+    return profileLocations.locate(profile, Boolean(sessions.sessionFor(id)?.info.proxyFellBack));
   });
   handle<Profile | null>('profiles:get', (id: string) => findProfile(id));
 

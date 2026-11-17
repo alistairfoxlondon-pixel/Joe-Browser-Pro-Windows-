@@ -12,8 +12,8 @@ export class ProfileLocationService {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async locate(profile: Profile): Promise<ProfileLocation> {
-    const key = profileLocationKey(profile);
+  async locate(profile: Profile, usingDirectFallback = false): Promise<ProfileLocation> {
+    const key = usingDirectFallback ? 'direct' : profileLocationKey(profile);
     const cached = this.cache.get(key);
     if (cached && cached.expires > this.now()) return cached.result;
     const existing = this.pending.get(key);
@@ -21,7 +21,7 @@ export class ProfileLocationService {
     const request = (async () => {
       let result: ProfileLocation = { key, country: '', countryCode: '', ok: false };
       try {
-        const reply = await (profile.proxy.type === 'none' ? this.direct() : this.proxied(profile));
+        const reply = await (usingDirectFallback || profile.proxy.type === 'none' ? this.direct() : this.proxied(profile));
         const code = countryCode(reply.countryCode);
         if (reply.ok && code) {
           result = { key, country: countryName(code, reply.country), countryCode: code, ok: true };

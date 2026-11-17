@@ -123,7 +123,7 @@ export function ProfileCard({
           {profile.screen}
         </Chip>
 
-        <LocationChip location={location} direct={!profile.hasProxy} />
+        <LocationChip location={location} direct={!profile.hasProxy || Boolean(session?.proxyFellBack)} />
 
         {profile.linked ? (
           <Chip tone="warn" title={t('card.linked')}>
@@ -219,7 +219,7 @@ export function ProfileRow({
         </div>
       </div>
 
-      <LocationChip location={location} direct={!profile.hasProxy} />
+      <LocationChip location={location} direct={!profile.hasProxy || Boolean(session?.proxyFellBack)} />
       <div className="chip muted" title={t('card.signature')}>
         {profile.signature}
       </div>
