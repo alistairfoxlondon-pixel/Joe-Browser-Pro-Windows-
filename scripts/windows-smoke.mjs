@@ -22,7 +22,7 @@ async function launch() {
 async function workspace(page) {
   await page.locator('.shell .nav-item').first().waitFor();
   assert.equal(await page.locator('.nav-item').count(), 8);
-  assert.equal(await page.locator('.recovery').count(), 0);
+  assert.equal(await page.locator('.recovery').count(), 0, `Renderer recovery: ${await page.locator('body').innerText()}; errors: ${errors.join(' | ')}`);
 }
 try {
   console.log('Installing to', destination);
@@ -45,7 +45,7 @@ try {
   for (let i = 0; i < 8; i++) {
     await page.locator('.nav-item').nth(i).click();
     await page.waitForTimeout(200);
-    assert.equal(await page.locator('.recovery').count(), 0);
+    assert.equal(await page.locator('.recovery').count(), 0, `Renderer recovery: ${await page.locator('body').innerText()}; errors: ${errors.join(' | ')}`);
   }
   assert.deepEqual(errors, []);
   await app.close(); app = null;
