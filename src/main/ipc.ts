@@ -38,6 +38,7 @@ import {
   clearStore,
   countProfiles,
   createProfile,
+  draftProfile,
   deleteProfile,
   describeRelation,
   duplicateProfile,
@@ -48,6 +49,7 @@ import {
   randomIdentity,
   renameProfile,
   rerollFingerprint,
+  restoreProfile,
   sanitizeProfile,
   saveSettings,
   sortProfiles,
@@ -211,7 +213,7 @@ export function registerIpc(context: IpcContext): void {
     return { profile, relation: describeRelation(profile, allProfiles()) };
   });
 
-  handle<Profile>('profiles:create', (input: Partial<Profile>) => {
+  const prepareProfile = (input: Partial<Profile>) => {
     const requested = { ...(input ?? {}) };
     const settings = getSettings();
     if (!requested.engine) requested.engine = settings.defaultEngine === 'auto' ? 'chrome' : settings.defaultEngine;
@@ -222,7 +224,13 @@ export function registerIpc(context: IpcContext): void {
     if (!requested.fingerprint?.os) {
       requested.fingerprint = { ...(requested.fingerprint ?? {}), os: 'System default' } as Profile['fingerprint'];
     }
-    const created = createProfile(requested);
+    return requested;
+  };
+
+  handle<Profile>('profiles:draft', (input: Partial<Profile>) => draftProfile(prepareProfile(input)));
+
+  handle<Profile>('profiles:create', (input: Partial<Profile> & { preserveFingerprint?: boolean }) => {
+    const created = createProfile(prepareProfile(input));
     changed();
     return created;
   });
@@ -482,7 +490,7 @@ export function registerIpc(context: IpcContext): void {
    * A profile that answers with a card the machine does not have is one of the few things a
    * scanner can see without any database: the renderer names one GPU, and the limits that come
    * with it come from another. The original read it from a browser it launched; so does this,
-   * by asking a headless run of whichever browser is installed.
+   * by asking a headless run of an app-managed Chromium build.
    */
   handle<{ vendor: string; renderer: string }>('browsers:gpu', async () => {
     const { learnMachineGpu } = await import('./core/gpu');
@@ -500,8 +508,13 @@ export function registerIpc(context: IpcContext): void {
 
   handle<ProxyCheckResult>('proxy:checkDirect', () => testDirect());
   handle<ProxyEntry[]>('proxy:list', () => listEntries().map(publicEntry));
+  handle<ProxyEntry>('proxy:get', (id: string) => {
+    const entry = listEntries().find((row) => row.id === id);
+    if (!entry) throw new Error('That proxy is no longer in the library.');
+    return { ...publicEntry(entry), password: passwordOf(entry) };
+  });
 
-  handle<ProxyEntry>('proxy:save', (input: Partial<ProxyEntry> & { config: ProxyConfig }) => {
+  handle<ProxyEntry>('proxy:save', (input: Partial<ProxyEntry> & { config: ProxyConfig; replacePassword?: boolean }) => {
     const saved = saveEntry(input);
     const password = passwordOf(saved);
     log.info(`saved proxy ${saved.name}`);
@@ -565,7 +578,7 @@ export function registerIpc(context: IpcContext): void {
     return result.filePath;
   });
 
-  handle<number>('profiles:import', async () => {
+  handle<number>('profiles:import', async (maxProfiles?: number) => {
     const window = BrowserWindow.getFocusedWindow();
     const options = {
       title: 'Import profiles',
@@ -578,6 +591,10 @@ export function registerIpc(context: IpcContext): void {
     const file = result.filePaths[0]!;
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { profiles?: unknown[] };
     const incoming = Array.isArray(parsed.profiles) ? parsed.profiles : [];
+    const validCount = incoming.filter((entry) => entry && typeof entry === 'object' && typeof (entry as Partial<Profile>).name === 'string').length;
+    if (maxProfiles !== undefined && (!Number.isSafeInteger(maxProfiles) || maxProfiles < 0 || validCount > maxProfiles)) {
+      throw new Error('This import exceeds the number of profiles available on your plan.');
+    }
     let imported = 0;
 
     for (const entry of incoming) {
@@ -661,10 +678,7 @@ export function registerIpc(context: IpcContext): void {
 
   handle<ExtensionItem>('extensions:addUrl', async (url: string) => {
     const result = await addFromUrl(url);
-    if (!result.item) {
-      await shell.openExternal(url);
-      throw new Error(result.message);
-    }
+    if (!result.item) throw new Error(result.message);
     broadcast('extensions:changed', { at: new Date().toISOString() });
     return result.item;
   });
@@ -786,15 +800,10 @@ export function registerIpc(context: IpcContext): void {
   handle<TrashItem[]>('trash:list', () => trash.listTrash());
 
   handle<string>('trash:restore', (file: string) => {
-    const id = trash.restore(file);
-    // The record is written back into the store from the bin, so the cache has to be reread.
-    const profile = trash.peekBackup(file);
-    if (profile) {
-      const stored = findProfile(profile.id);
-      if (!stored) {
-        createProfile({ ...profile, preserveFingerprint: true });
-      }
-    }
+    const backup = trash.peek(file);
+    if (!backup) throw new Error('That entry is no longer in the bin.');
+    if (findProfile(backup.id)) throw new Error('This profile already exists.');
+    const id = trash.restore(file, (profile) => { restoreProfile(profile); });
     changed();
     return id;
   });

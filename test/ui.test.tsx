@@ -766,3 +766,48 @@ test('a failed startup can reload settings, app info and account state', async (
     mockBridge.getSettings = original;
   }
 });
+
+test('new profile editor creates no record until save', async () => {
+  signIn();
+  reset();
+  const settings = await mockBridge.getSettings();
+  const existing = await mockBridge.listProfiles();
+  const before = existing.length;
+  let saved = false;
+  await render(hosted(React.createElement(ProfileEditor, {
+    profile: null, onClose: () => undefined, onSaved: () => { saved = true; },
+    settings, existing, toast: { toast: () => undefined } as never,
+  })));
+  assert.equal((await mockBridge.listProfiles()).length, before);
+  const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Save changes'));
+  assert.ok(save);
+  await act(async () => { save.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(saved, true);
+  assert.equal((await mockBridge.listProfiles()).length, before + 1);
+  await teardown();
+});
+
+test('saving an unrelated profile edit does not send a blank proxy password', async () => {
+  signIn();
+  reset();
+  const settings = await mockBridge.getSettings();
+  const existing = await mockBridge.listProfiles();
+  const profile = (await mockBridge.getProfile(existing[0]!.id))!;
+  const original = mockBridge.updateProfile;
+  let sent: Parameters<typeof mockBridge.updateProfile>[1] | undefined;
+  mockBridge.updateProfile = async (id, patch) => { sent = patch; return { ...profile, ...patch, id }; };
+  try {
+    await render(hosted(React.createElement(ProfileEditor, {
+      profile, onClose: () => undefined, onSaved: () => undefined,
+      settings, existing, toast: { toast: () => undefined } as never,
+    })));
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Save changes'));
+    assert.ok(save);
+    await act(async () => { save.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    assert.ok(sent?.proxy);
+    assert.equal(sent.proxy.password, undefined);
+  } finally {
+    mockBridge.updateProfile = original;
+    await teardown();
+  }
+});

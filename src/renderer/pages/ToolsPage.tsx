@@ -27,6 +27,9 @@ import {
 import { BatchCreateModal } from './BatchCreateModal';
 import { messageOf } from '../util';
 import type { AppSettings } from '../../shared/types';
+import { useSubscription } from '../cloud/subscription';
+import { FREE_PROFILE_LIMIT } from '../cloud/client';
+import { ActivateDialog } from '../components/ActivateDialog';
 
 /**
  * Tools and data.
@@ -50,6 +53,9 @@ export function ToolsPage({
   const { t } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
+  const subscription = useSubscription();
+  const [activateOpen, setActivateOpen] = useState(false);
+  const remaining = subscription.tier === 'free' ? Math.max(0, FREE_PROFILE_LIMIT - profiles.length) : undefined;
 
   const [stats, setStats] = useState<StoreStats | null>(null);
   const [trash, setTrash] = useState<TrashItem[]>([]);
@@ -170,11 +176,11 @@ export function ToolsPage({
         <div className="content-inner">
           <div className="section-label">{t('tools.title')}</div>
           <div className="tiles">
-            {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => setBatching(true))}
+            {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true))}
             {tile('download', t('tools.import'), t('tools.import.hint'), async () => {
               setBusy('import');
               try {
-                const count = await bridge().importProfiles();
+                const count = await bridge().importProfiles(remaining);
                 await refreshProfiles();
                 if (count > 0) toast.success(t('btn.import'), String(count));
               } catch (error) {
@@ -297,6 +303,7 @@ export function ToolsPage({
                       variant="soft"
                       icon="refresh"
                       onClick={async () => {
+                        if (remaining === 0) { setActivateOpen(true); return; }
                         try {
                           const id = await bridge().restoreTrash(item.file);
                           toast.success(t('trash.restored').replace('{name}', item.name), id);
@@ -355,6 +362,7 @@ export function ToolsPage({
         </div>
       </div>
 
+      <ActivateDialog open={activateOpen} onClose={() => setActivateOpen(false)} onActivated={() => void subscription.refresh()} />
       {batching ? (
         <BatchCreateModal
           settings={settings ?? ({} as AppSettings)}

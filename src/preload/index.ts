@@ -27,6 +27,7 @@ const bridge = {
   listProfiles: () => invoke('profiles:list'),
   getProfile: (id: string) => invoke('profiles:get', id),
   getProfileRelation: (id: string) => invoke('profiles:relation', id),
+  draftProfile: (input: unknown) => invoke('profiles:draft', input),
   createProfile: (input: unknown) => invoke('profiles:create', input),
   updateProfile: (id: string, patch: unknown) => invoke('profiles:update', id, patch),
   deleteProfile: (id: string) => invoke('profiles:delete', id),
@@ -36,7 +37,7 @@ const bridge = {
   randomIdentity: (id: string) => invoke('profiles:random', id),
   clearProfileData: (id: string, scope: string) => invoke('profiles:clear', id, scope),
   exportProfiles: () => invoke('profiles:export'),
-  importProfiles: () => invoke('profiles:import'),
+  importProfiles: (maxProfiles?: number) => invoke('profiles:import', maxProfiles),
 
   /* ---------------------------------------------------------------- batch + bulk */
   batchCreate: (input: unknown) => invoke('profiles:batch', input),
@@ -64,6 +65,7 @@ const bridge = {
   checkProxy: (config: unknown, password?: string) => invoke('proxy:check', config, password),
   checkDirect: () => invoke('proxy:checkDirect'),
   listProxies: () => invoke('proxy:list'),
+  getSavedProxy: (id: string) => invoke('proxy:get', id),
   saveProxy: (entry: unknown) => invoke('proxy:save', entry),
   deleteProxy: (id: string) => invoke('proxy:delete', id),
   importProxyList: (text: string) => invoke('proxy:import', text),

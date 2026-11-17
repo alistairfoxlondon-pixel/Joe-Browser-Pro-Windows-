@@ -18,16 +18,9 @@ export function Logo({ size = 40, className }: { size?: number; className?: stri
       role="img"
       aria-label="Joe Browser"
     >
-      <rect x="2" y="2" width="60" height="60" rx="15" fill="#2f6bde" />
-      <path d="M19 20.5h26" stroke="#ffffff" strokeWidth="6" strokeLinecap="round" />
-      <path
-        d="M38 20.5V40.6a9.5 9.5 0 0 1-19 0"
-        fill="none"
-        stroke="#ffffff"
-        strokeWidth="6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <rect x="2" y="2" width="60" height="60" rx="11" fill="#2f6bde" />
+      <circle cx="32" cy="32" r="21" fill="none" stroke="#fff" strokeWidth="3" />
+      <path d="M29 21h12M37 21v16a8 8 0 0 1-16 0" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -36,9 +29,11 @@ export function Wordmark({ height = 34, className }: { height?: number; classNam
   const width = Math.round((520 / 96) * height);
   return (
     <svg viewBox="0 0 520 96" height={height} width={width} className={className} role="img" aria-label="Joe Browser">
-      <rect x="4" y="4" width="88" height="88" rx="22" fill="#2f6bde" />
-      <path d="M31 32h34" stroke="#ffffff" strokeWidth="8" strokeLinecap="round" />
-      <path d="M56 32V63a13.5 13.5 0 0 1-27 0" fill="none" stroke="#ffffff" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+      <g transform="translate(4 4) scale(1.375)">
+        <rect x="2" y="2" width="60" height="60" rx="11" fill="#2f6bde" />
+        <circle cx="32" cy="32" r="21" fill="none" stroke="#fff" strokeWidth="3" />
+        <path d="M29 21h12M37 21v16a8 8 0 0 1-16 0" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+      </g>
       <text x="112" y="45" fontFamily="'Fira Sans','Segoe UI',system-ui,sans-serif" fontSize="30" fontWeight={700} fill="var(--text, #eef1f6)">
         Joe Browser
       </text>

@@ -655,6 +655,11 @@ export const mockBridge: Bridge = {
     };
   },
 
+  async draftProfile(input: Partial<Profile>): Promise<Profile> {
+    const base = mockProfiles[0]!;
+    return { ...base, ...input, id: `draft-${Date.now()}`, name: input.name ?? 'New profile' } as Profile;
+  },
+
   async createProfile(input: Partial<Profile>): Promise<Profile> {
     const base = mockProfiles[0]!;
     const created: Profile = {
@@ -854,6 +859,12 @@ export const mockBridge: Bridge = {
     return mockProxies.map((entry) => ({ ...entry }));
   },
 
+  async getSavedProxy(id: string): Promise<ProxyEntry> {
+    const entry = mockProxies.find((row) => row.id === id);
+    if (!entry) throw new Error('That proxy is no longer in the library.');
+    return { ...entry };
+  },
+
   async saveProxy(entry): Promise<ProxyEntry> {
     const existing = mockProxies.find((row) => row.id === entry.id);
     if (existing) {
@@ -960,19 +971,15 @@ export const mockBridge: Bridge = {
     return {
       masterEnabled: true,
       customExtensionsEnabled: true,
-      firstParty: [
-        { id: 'joe-tools', name: 'Joe Tools', description: 'Right-click menu, selection unlock and human-paced paste.', enabled: true },
-        { id: 'joe-webrtc', name: 'Joe WebRTC guard', description: 'Keeps the exit address from leaking through ICE candidates.', enabled: true },
-        { id: 'joe-cleaner', name: 'Joe Session cleaner', description: 'Erases a profile\'s storage when it closes.', enabled: false },
-      ],
+      firstParty: [],
       library: mockExtensions.map((item) => ({ ...item })),
       shipped: [
-        { id: 'joe-proxy-guard', name: 'Joe Proxy Guard', description: 'Warns before the exit address drifts.', present: true, removed: false },
-        { id: 'joe-session-keeper', name: 'Joe Session Keeper', description: 'Keeps an idle session warm.', present: true, removed: false },
+        { id: 'joe-http-tracker-plus', name: 'HTTP Tracker (included tool)', description: 'Local implementation.', present: true, removed: false },
+        { id: 'joe-right-click-enable', name: 'Right Click and Copy (included tool)', description: 'Local implementation.', present: true, removed: false },
       ],
       recommended: [
-        { name: 'uBlock Origin', description: 'Wide-spectrum content blocker.', url: 'https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm', icon: '' },
-        { name: 'Cookie Editor', description: 'Read and edit the cookies a profile holds.', url: 'https://chromewebstore.google.com/detail/ophjlpahpchlmihnnnihgmmeilfjmjjc', icon: '' },
+        { name: 'uBlock Origin Lite', description: 'Content blocker', url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh', icon: './brand/ublock-origin-lite.png' },
+        { name: 'Bitwarden', description: 'Password manager', url: 'https://chromewebstore.google.com/detail/bitwarden-free-password-m/nngceckbapebfimnlniiiahkandclblb', icon: './brand/bitwarden.png' },
       ],
     };
   },

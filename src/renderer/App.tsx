@@ -299,6 +299,12 @@ export function App(): ReactNode {
     >
       <SubscriptionProvider user={signedIn ? authUser : null}>
         <ToastProvider>
+          <SubscriptionGuard onSignOut={async () => {
+            await cloud().signOut();
+            setAuthUser(null);
+            persistLocalMode(false);
+            setPage('profiles');
+          }}>
           <div className={`shell${narrow ? ' narrow' : ''}`}>
             <Rail
               page={page}
@@ -352,9 +358,25 @@ export function App(): ReactNode {
           </main>
           <LockOverlay />
           </div>
+          </SubscriptionGuard>
         </ToastProvider>
       </SubscriptionProvider>
     </I18nProvider>
+  );
+}
+
+/** Blocked accounts cannot use the signed-in workspace. Local data is not deleted. */
+function SubscriptionGuard({ children, onSignOut }: { children: ReactNode; onSignOut: () => Promise<void> }): ReactNode {
+  const subscription = useSubscription();
+  if (!subscription.entitlement?.isBlocked) return children;
+  return (
+    <div className="gate" style={{ display: 'grid', placeItems: 'center', padding: 24 }}>
+      <div className="panel" style={{ maxWidth: 420, width: '100%' }}>
+        <h1>Account unavailable</h1>
+        <p>Contact your administrator for access.</p>
+        <button type="button" className="btn btn-primary" onClick={() => void onSignOut()}>Sign out</button>
+      </div>
+    </div>
   );
 }
 

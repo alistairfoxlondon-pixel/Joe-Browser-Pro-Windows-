@@ -9,10 +9,8 @@ import { messageOf } from '../util';
 /**
  * Browsers and builds.
  *
- * Two different things share this page because they answer one question: which binary will a
- * profile launch? A detected browser is whatever this PC already has; a downloaded build is one
- * this app owns, so every profile pinned to it reports the same version and no silent update can
- * move the version under a logged-in session.
+ * Detected browsers are informational only. Profiles launch app-managed builds, so a system
+ * browser update cannot silently change the version used by a profile.
  *
  * The graphics card panel lives here too, because reading the adapter means launching a browser,
  * and that is exactly what this page is about.
@@ -127,7 +125,7 @@ export function BrowsersPage({
         <div className="header-titles">
           <h1>{t('br.title')}</h1>
           <div className="sub">
-            {browsers.length} detected · {installed.length} downloaded builds
+            {browsers.length} detected (informational) · {installed.length} downloaded builds
           </div>
         </div>
         <div className="header-actions">
@@ -144,7 +142,7 @@ export function BrowsersPage({
             <EmptyState
               icon="browsers"
               title={t('br.none')}
-              body="No Chrome, Edge, Brave or Firefox was found in the usual places. Download a build below, or install a browser and detect again."
+              body="No system browsers detected. Profiles use app-managed builds downloaded below."
               action={
                 <Button variant="primary" icon="refresh" onClick={() => void load()}>
                   {t('btn.detect')}

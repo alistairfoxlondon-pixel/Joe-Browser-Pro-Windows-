@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { parseProxyLine } from '../../shared/parseProxy';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   AppSettings,
   DetectedBrowser,
@@ -79,6 +80,8 @@ export function ProfileEditor({
   const [browsers, setBrowsers] = useState<DetectedBrowser[]>([]);
   const [kernels, setKernels] = useState<KernelBuild[]>([]);
   const [proxies, setProxies] = useState<ProxyEntry[]>([]);
+  const proxySelection = useRef(0);
+  const passwordChanged = useRef(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState('');
@@ -88,8 +91,7 @@ export function ProfileEditor({
 
   const isNew = !profile;
 
-  // A new profile starts as a real draft, not a form full of blanks: the shell asks for a
-  // default identity and the editor edits that.
+  // A draft is generated without creating a persistent profile.
   useEffect(() => {
     let live = true;
     if (profile) {
@@ -98,12 +100,10 @@ export function ProfileEditor({
     }
     void (async () => {
       try {
-        const created = await bridge().createProfile({ name: nextName(existing), group: settings.defaultGroup });
+        const created = await bridge().draftProfile({ name: nextName(existing), group: settings.defaultGroup });
         if (live) {
           setDraft(created);
-          // The record exists so the fingerprint can be rolled against the workspace; naming it
-          // "Profile 7" the moment it is saved is not a change the user made.
-          setDirty(true);
+
         }
       } catch (error) {
         if (live) toast.error(t('err.generic'), messageOf(error));
@@ -156,7 +156,7 @@ export function ProfileEditor({
     const fp = draft?.fingerprint;
     if (!fp) return '';
     return `${fp.screenW}×${fp.screenH} @${fp.pixelRatio}x · ${fp.cores} cores · ${fp.memory} GB`;
-  }, [draft]);
+  }, [draft, isNew]);
 
   const firefoxWarning = draft?.engine === 'firefox';
 
@@ -169,10 +169,6 @@ export function ProfileEditor({
         danger: true,
       });
       if (!ok) return;
-      // A draft that was never saved must not become a profile: roll it back.
-      if (isNew && draft) {
-        await bridge().deleteProfile(draft.id).catch(() => undefined);
-      }
     }
     onClose();
   }, [confirm, dirty, isNew, draft, onClose, t]);
@@ -182,9 +178,12 @@ export function ProfileEditor({
     setSaving(true);
     try {
       if (isNew) {
-        await bridge().createProfile(draft);
+        await bridge().createProfile({ ...draft, preserveFingerprint: true });
       } else {
-        await bridge().updateProfile(draft.id, draft);
+        await bridge().updateProfile(draft.id, {
+          ...draft,
+          proxy: { ...draft.proxy, password: passwordChanged.current ? draft.proxy.password : undefined },
+        });
       }
       toast.success(t('btn.save'), draft.name);
       onSaved();
@@ -200,8 +199,8 @@ export function ProfileEditor({
   const reroll = async () => {
     if (!draft) return;
     try {
-      const rolled = await bridge().rerollFingerprint(draft.id);
-      setDraft({ ...rolled, name: draft.name, notes: draft.notes, group: draft.group, tags: draft.tags, proxy: draft.proxy, tools: draft.tools });
+      const rolled = await bridge().draftProfile(draft);
+      setDraft({ ...draft, fingerprint: rolled.fingerprint });
       setDirty(true);
       setClash('');
       toast.success(t('ed.fp.new'), rolled.fingerprint.timezone);
@@ -213,8 +212,10 @@ export function ProfileEditor({
   const randomise = async () => {
     if (!draft) return;
     try {
-      const rolled = await bridge().randomIdentity(draft.id);
-      setDraft({ ...rolled, name: draft.name, notes: draft.notes, group: draft.group, tags: draft.tags, proxy: draft.proxy, tools: draft.tools });
+      const targets = ['Windows 11', 'Windows 10', 'macOS', 'Linux', 'Android', 'iPhone', 'iPad'] as const;
+      const os = targets[Math.floor(Math.random() * targets.length)]!;
+      const rolled = await bridge().draftProfile({ ...draft, fingerprint: { ...draft.fingerprint, os } });
+      setDraft({ ...draft, fingerprint: rolled.fingerprint });
       setDirty(true);
       setClash('');
       toast.success(t('ed.fp.random'), rolled.fingerprint.os);
@@ -266,7 +267,7 @@ export function ProfileEditor({
   };
 
   const checkClash = useCallback(async () => {
-    if (!draft) return;
+    if (!draft || isNew) return;
     try {
       const { relation } = await bridge().getProfileRelation(draft.id);
       if (relation && /shar/i.test(relation)) {
@@ -729,9 +730,14 @@ export function ProfileEditor({
                     style={{ width: 200 }}
                     value=""
                     onChange={(event) => {
-                      const entry = proxies.find((row) => row.id === event.target.value);
-                      if (!entry) return;
-                      patchProxy({ ...entry.config, password: entry.password });
+                      const id = event.target.value;
+                      if (!id) return;
+                      const selection = ++proxySelection.current;
+                      void bridge().getSavedProxy(id).then((entry) => {
+                        if (selection !== proxySelection.current) return;
+                        passwordChanged.current = true;
+                        patchProxy({ ...entry.config, password: entry.password ?? '', passwordEnc: '' });
+                      }).catch((error: unknown) => toast.error(t('err.generic'), messageOf(error)));
                     }}
                   >
                     <option value="">{t('ed.proxy.from')}</option>
@@ -782,6 +788,13 @@ export function ProfileEditor({
                       className="input mono"
                       value={draft.proxy.host}
                       onChange={(event) => patchProxy({ host: event.target.value })}
+                      onPaste={(event) => {
+                        const parsed = parseProxyLine(event.clipboardData.getData('text'));
+                        if (!parsed) return;
+                        event.preventDefault();
+                        passwordChanged.current = true;
+                        patchProxy({ ...parsed, passwordEnc: '' });
+                      }}
                       placeholder="gate.example.com"
                       spellCheck={false}
                     />
@@ -812,7 +825,7 @@ export function ProfileEditor({
                       className="input mono"
                       type="password"
                       value={draft.proxy.password ?? ''}
-                      onChange={(event) => patchProxy({ password: event.target.value })}
+                      onChange={(event) => { passwordChanged.current = true; patchProxy({ password: event.target.value }); }}
                       autoComplete="new-password"
                     />
                   </Field>
@@ -839,16 +852,18 @@ export function ProfileEditor({
 
             <div className="form-grid">
               <Toggle
-                checked={draft.tools.humanPaste}
+                checked={!firefoxWarning && draft.tools.humanPaste}
                 onChange={(humanPaste) => patchTools({ humanPaste })}
                 label={t('ed.humanpaste')}
+                disabled={firefoxWarning}
+                detail={firefoxWarning ? 'Not available in Firefox profiles.' : 'Types text when you use the standard paste command.'}
               />
               <Field label={t('ed.humanspeed')}>
                 <select
                   className="select"
                   value={draft.tools.humanPasteSpeed}
                   onChange={(event) => patchTools({ humanPasteSpeed: event.target.value })}
-                  disabled={!draft.tools.humanPaste}
+                  disabled={firefoxWarning || !draft.tools.humanPaste}
                 >
                   {HUMAN_PASTE_SPEEDS.map((speed) => (
                     <option key={speed} value={speed}>
@@ -857,17 +872,6 @@ export function ProfileEditor({
                   ))}
                 </select>
               </Field>
-
-              <Toggle
-                checked={draft.tools.enableRightClick}
-                onChange={(enableRightClick) => patchTools({ enableRightClick })}
-                label={t('ed.rightclick')}
-              />
-              <Toggle
-                checked={draft.tools.unlockSelection}
-                onChange={(unlockSelection) => patchTools({ unlockSelection })}
-                label="Unlock text selection"
-              />
 
               <Toggle
                 checked={draft.tools.proxyWatch}

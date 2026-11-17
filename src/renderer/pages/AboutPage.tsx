@@ -3,7 +3,8 @@ import type { AppInfo, ProfileSummary, StoreStats } from '../../shared/types';
 import { TELEGRAM_USER } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
-import { Icon, type IconName } from '../components/Icon';
+import { Icon } from '../components/Icon';
+import { Logo } from '../components/Brand';
 import { Button } from '../components/UI';
 
 /**
@@ -18,17 +19,6 @@ import { Button } from '../components/UI';
  * whether their install is healthy. The original had the same three counts at the foot of its
  * About page and they were the only thing on it that changed.
  */
-
-const FEATURES: { icon: IconName; title: string; body: string }[] = [
-  { icon: 'profiles', title: 'about.f1', body: 'about.f1.body' },
-  { icon: 'fingerprint', title: 'about.f2', body: 'about.f2.body' },
-  { icon: 'lock', title: 'about.f3', body: 'about.f3.body' },
-  { icon: 'proxy', title: 'about.f4', body: 'about.f4.body' },
-  { icon: 'phone', title: 'about.f5', body: 'about.f5.body' },
-  { icon: 'route', title: 'about.f6', body: 'about.f6.body' },
-  { icon: 'extensions', title: 'about.f7', body: 'about.f7.body' },
-  { icon: 'lock', title: 'about.f8', body: 'about.f8.body' },
-];
 
 export function AboutPage({
   info,
@@ -78,9 +68,9 @@ export function AboutPage({
       </header>
 
       <div className="content">
-        <div className="content-inner" style={{ maxWidth: 1080 }}>
+        <div className="content-inner">
           <div className="about-hero">
-            <div className="mark">J</div>
+            <Logo size={56} />
             <div className="grow">
               <div style={{ fontSize: 20, fontWeight: 680, letterSpacing: '-0.02em' }}>
                 {t('app.title')}
@@ -136,30 +126,6 @@ export function AboutPage({
             ) : null}
           </div>
 
-          <div className="section-label">{t('about.features')}</div>
-          <div className="feature-grid">
-            {FEATURES.map((feature) => (
-              <div className="feature" key={feature.title}>
-                <h4>
-                  <Icon name={feature.icon} />
-                  {t(feature.title)}
-                </h4>
-                <p>{t(feature.body)}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="section-label">{t('about.privacy')}</div>
-          <div className="panel">
-            <div className="spread" style={{ alignItems: 'flex-start' }}>
-              <Icon name="lock" />
-              <div className="grow">
-                <div style={{ fontWeight: 590 }}>{t('about.privacy')}</div>
-                <div className="hint" style={{ marginTop: 3 }}>{t('about.privacy.body')}</div>
-              </div>
-            </div>
-          </div>
-
           <div className="section-label">{t('about.support')}</div>
           <div className="rows">
             <div className="row">
@@ -192,7 +158,6 @@ export function AboutPage({
               </div>
               <div className="row-main">
                 <div className="row-title">@{TELEGRAM_USER}</div>
-                <div className="row-sub">The support channel the Report button points at.</div>
               </div>
               <Button size="sm" variant="ghost" icon="external" onClick={() => void bridge().openExternal(`https://t.me/${TELEGRAM_USER}`)}>
                 {t('rep.telegram')}
@@ -200,9 +165,6 @@ export function AboutPage({
             </div>
           </div>
 
-          <div className="hint center" style={{ marginTop: 24 }}>
-            {t('about.thanks')}
-          </div>
         </div>
       </div>
     </>

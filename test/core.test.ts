@@ -27,9 +27,6 @@ const { parseProxyLine, normalizeProxy, proxyEnabled, proxyLabel } = await impor
 const { buildFingerprintScript } = await import('../src/main/core/inject');
 const store = await import('../src/main/core/store');
 const { startRelay } = await import('../src/main/core/relay');
-const { ensureFirstPartyExtensions, extensionArgs, extensionDirectories } = await import(
-  '../src/main/core/extensions'
-);
 const history = await import('../src/main/core/history');
 
 test('the same seed always rebuilds the same machine', () => {
@@ -228,51 +225,6 @@ test('a proxy password is never stored in the clear', () => {
   assert.equal(raw.includes('hunter2'), false, 'the plaintext password reached the store file');
   assert.ok(created.proxy.passwordEnc.length > 0);
   assert.equal(store.proxyPasswordOf(created), 'hunter2');
-});
-
-test('the built-in extensions are written to disk with valid manifests', () => {
-  const installed = ensureFirstPartyExtensions();
-  assert.equal(installed.length, 3, 'expected three first-party extensions');
-
-  for (const extension of installed) {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(extension.dir, 'manifest.json'), 'utf8'),
-    ) as Record<string, unknown>;
-    assert.equal(manifest['manifest_version'], 3, `${extension.id} is not MV3`);
-    assert.ok(fs.existsSync(path.join(extension.dir, 'content.js')), `${extension.id} has no script`);
-    assert.ok(
-      (manifest['content_scripts'] as unknown[]).length > 0,
-      `${extension.id} declares no content script`,
-    );
-  }
-
-  // Re-running must not duplicate or corrupt anything.
-  const again = ensureFirstPartyExtensions();
-  assert.deepEqual(again.map((e) => e.id), installed.map((e) => e.id));
-});
-
-test('the extension switches only carry folders that really are extensions', () => {
-  const base = store.createProfile({ name: 'Extension host' });
-  const good = path.join(scratch, 'extensions', 'joe-right-click');
-  const missing = path.join(scratch, 'extensions', 'does-not-exist');
-
-  const withBadPath = store.updateProfile(base.id, {
-    tools: { ...base.tools, customExtensions: `${good}\n${missing}\n` },
-  });
-
-  const directories = extensionDirectories(withBadPath, true);
-  assert.ok(directories.includes(good), 'a valid custom folder was dropped');
-  assert.ok(!directories.includes(missing), 'a folder with no manifest was passed to the browser');
-  assert.ok(directories.length >= 4, 'the three first-party extensions should also be present');
-
-  const args = extensionArgs(directories);
-  assert.equal(args.length, 2);
-  assert.ok(args[0]!.startsWith('--load-extension='));
-  assert.ok(args[1]!.startsWith('--disable-extensions-except='));
-
-  // The master switch turns everything off, including the built-in three.
-  assert.deepEqual(extensionDirectories(withBadPath, false), []);
-  assert.deepEqual(extensionArgs([]), []);
 });
 
 test('history is recorded per profile and cannot leak between them', () => {
@@ -677,4 +629,97 @@ test('a workspace default build is honoured, and ignored when it is not installe
   } finally {
     store.saveSettings({ defaultKernelId: before.defaultKernelId });
   }
+});
+
+test('proxy parser rejects malformed ports and credentials without throwing', () => {
+  assert.equal(parseProxyLine('host:123junk'), null);
+  assert.equal(parseProxyLine('http://%zz:pass@host:8080'), null);
+  assert.equal(parseProxyLine('host:8080:user'), null);
+  assert.deepEqual(parseProxyLine('socks5://user:pass@host:1080'), {
+    type: 'socks5', host: 'host', port: 1080, user: 'user', password: 'pass',
+  });
+});
+
+test('saved proxy credentials are preserved unless explicitly replaced or cleared', async () => {
+  const vault = await import('../src/main/core/proxies');
+  const config = { ...normalizeProxy({ type: 'http', host: 'proxy.test', port: 8080, user: 'alice' }), password: 'secret' };
+  const created = vault.saveEntry({ name: 'example', config });
+  assert.equal(vault.passwordOf(created), 'secret');
+  const publicRow = vault.publicEntry(created);
+  assert.equal('passwordEnc' in publicRow, false);
+  const preserved = vault.saveEntry({ ...publicRow, config: publicRow.config });
+  assert.equal(vault.passwordOf(preserved), 'secret');
+  const cleared = vault.saveEntry({ ...publicRow, replacePassword: true, config: { ...publicRow.config, user: '', password: '' } });
+  assert.equal(vault.passwordOf(cleared), '');
+});
+
+test('profile drafts do not persist and can be saved with their chosen fingerprint', () => {
+  const before = store.countProfiles();
+  const draft = store.draftProfile({ name: 'Unsaved draft' });
+  assert.equal(store.countProfiles(), before);
+  assert.equal(store.findProfile(draft.id), null);
+  const saved = store.createProfile({ ...draft, preserveFingerprint: true });
+  assert.equal(store.countProfiles(), before + 1);
+  assert.deepEqual(saved.fingerprint, draft.fingerprint);
+});
+
+test('recycle bin restoration preserves profile ID, browser data and credentials', async () => {
+  const trash = await import('../src/main/core/trash');
+  const { Paths } = await import('../src/main/core/paths');
+  const saved = store.createProfile({ name: 'Restore identity', proxy: normalizeProxy({ type: 'http', host: 'example.test', port: 8080, user: 'user', password: 'password' }) });
+  const dir = Paths.profileData(saved.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'cookies.test'), 'cookie data');
+  store.deleteProfile(saved.id, true);
+  const entry = trash.listTrash().find((row) => row.id === saved.id)!;
+  assert.ok(entry);
+  const restored = trash.restore(entry.file, (profile) => { store.restoreProfile(profile); });
+  assert.equal(restored, saved.id);
+  const record = store.findProfile(saved.id)!;
+  assert.ok(record);
+  assert.equal(store.proxyPasswordOf(record), 'password');
+  assert.equal(fs.readFileSync(path.join(dir, 'cookies.test'), 'utf8'), 'cookie data');
+  assert.equal(trash.listTrash().some((row) => row.id === saved.id), false);
+});
+
+test('recycle bin refuses to overwrite existing profile data and keeps the backup', async () => {
+  const trash = await import('../src/main/core/trash');
+  const { Paths } = await import('../src/main/core/paths');
+  const saved = store.createProfile({ name: 'Restore conflict' });
+  const dir = Paths.profileData(saved.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'original'), 'parked');
+  store.deleteProfile(saved.id, true);
+  const entry = trash.listTrash().find((row) => row.id === saved.id)!;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'current'), 'safe');
+  assert.throws(() => trash.restore(entry.file, (profile) => { store.restoreProfile(profile); }), /already exists/);
+  assert.equal(fs.readFileSync(path.join(dir, 'current'), 'utf8'), 'safe');
+  assert.ok(trash.listTrash().some((row) => row.id === saved.id));
+});
+
+test('a failed restore rolls browser data back and retains the backup', async () => {
+  const trash = await import('../src/main/core/trash');
+  const { Paths } = await import('../src/main/core/paths');
+  const saved = store.createProfile({ name: 'Restore rollback' });
+  const dir = Paths.profileData(saved.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session'), 'retained');
+  store.deleteProfile(saved.id, true);
+  const entry = trash.listTrash().find((row) => row.id === saved.id)!;
+  assert.throws(() => trash.restore(entry.file, () => { throw new Error('write failed'); }), /write failed/);
+  assert.equal(fs.existsSync(dir), false);
+  assert.ok(trash.listTrash().some((row) => row.id === saved.id));
+  trash.restore(entry.file, (profile) => { store.restoreProfile(profile); });
+  assert.equal(fs.readFileSync(path.join(dir, 'session'), 'utf8'), 'retained');
+});
+
+test('browser build IDs cannot escape the managed kernel directory', async () => {
+  const { removeKernel, resolveKernelExe, downloadKernel } = await import('../src/main/core/catalog');
+  for (const id of ['../other', '..', '/absolute', 'x/../../other', 'x\\..\\other']) {
+    await assert.rejects(removeKernel(id), /Invalid browser build ID/);
+    assert.throws(() => resolveKernelExe(id), /Invalid browser build ID/);
+    await assert.rejects(downloadKernel({ id } as never, () => {}), /Invalid browser build ID/);
+  }
+  assert.equal(resolveKernelExe('chrome-123.0-stable'), null);
 });

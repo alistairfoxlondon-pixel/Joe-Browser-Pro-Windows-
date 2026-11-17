@@ -66,7 +66,7 @@ const ACCENTS = ['#4f8cff', '#7c5cff', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4
 
 export function defaultTools(): ToolConfig {
   return {
-    humanPaste: true,
+    humanPaste: false,
     humanPasteSpeed: 'natural',
     proxyWatch: true,
     proxyWatchInterval: 60,
@@ -188,7 +188,8 @@ export interface CreateProfileInput extends Partial<Profile> {
   preserveFingerprint?: boolean;
 }
 
-export function createProfile(input: CreateProfileInput): Profile {
+/** Construct a profile without writing it, for an editor draft. */
+export function draftProfile(input: CreateProfileInput): Profile {
   const store = load();
   const now = new Date().toISOString();
   const target = asTarget(input.fingerprint?.os);
@@ -260,9 +261,28 @@ export function createProfile(input: CreateProfileInput): Profile {
     flags: {},
   });
 
-  store.profiles.push(profile);
+  return profile;
+}
+
+export function createProfile(input: CreateProfileInput): Profile {
+  const profile = draftProfile(input);
+  load().profiles.push(profile);
   persist(true);
   log.info(`created profile ${profile.name} (${profile.fingerprint.os})`);
+  return profile;
+}
+
+/** Restore the original ID so its browser-data directory remains associated with it. */
+export function restoreProfile(input: Profile): Profile {
+  if (!input.id || !/^[A-Za-z0-9_-]{1,128}$/.test(input.id)) throw new Error('Invalid profile identifier in the backup.');
+  const store = load();
+  if (store.profiles.some((entry) => entry.id === input.id)) throw new Error('This profile already exists.');
+  const profile = sanitizeProfile(input);
+  store.profiles.push(profile);
+  try { persist(true); } catch (error) {
+    store.profiles.pop();
+    throw error;
+  }
   return profile;
 }
 
@@ -343,7 +363,10 @@ export function deleteProfile(id: string, useTrash = getSettings().useTrash): vo
       log.info(`profile ${profile.name} moved to the recycle bin`);
       return;
     } catch (error) {
-      log.warn('the recycle bin refused the profile; deleting it outright', error);
+      // Never turn a failed recycle-bin operation into permanent deletion.
+      store.profiles.splice(index, 0, profile);
+      persist(true);
+      throw error;
     }
   }
 

@@ -10,20 +10,19 @@ import { CdpClient, delay } from './cdp';
 import { buildFingerprintScript } from './inject';
 import { openTunnel, proxyEnabled, upstreamOf, type Upstream } from './proxy';
 import { startRelay, type RelayHandle } from './relay';
-import { proxyPasswordOf, findProfile, getSettings } from './store';
-import { installFirefoxExtensions } from './extensions';
+import { proxyPasswordOf, getSettings } from './store';
 import { loadArgs, profileExtensionFolders } from './library';
 import { log } from './log';
 import { testProxy } from './proxy';
 import * as history from './history';
-import { resolveKernelExe, detectInstalledBrowsers } from './catalog';
+import { resolveKernelExe, installedKernels, compareVersions } from './catalog';
 import { buildIdentity } from './ua';
 
 /**
  * Launching a profile.
  *
  * The order matters and is deliberate:
- *   1. Resolve a real browser binary - a pinned kernel, or one already on the PC.
+ *   1. Resolve an app-managed browser binary for the selected engine.
  *   2. Start the relay if the profile has an authenticated proxy.
  *   3. Spawn the browser with its own user-data-dir, so cookies and storage are its own.
  *   4. Attach over CDP and stamp every new target *before* it runs, then release it.
@@ -156,7 +155,10 @@ export class BrowserSession extends EventEmitter {
 
     if (isFirefox) {
       this.writeFirefoxPrefs(profile, identity.userAgent, proxyArg);
-      if (masterEnabled) installFirefoxExtensions(this.dataDir);
+      // Remove only our obsolete sideloads; the built-in Chromium tool does not use extensions.
+      for (const id of ['joe-paste-as-human@joebrowser.local', 'joe-right-click@joebrowser.local', 'joe-tracker-plus@joebrowser.local']) {
+        try { fs.rmSync(path.join(this.dataDir, 'extensions', id), { recursive: true, force: true }); } catch { /* retry on the next launch */ }
+      }
     }
 
     this.injectScript = buildFingerprintScript({
@@ -827,31 +829,19 @@ export class SessionManager {
   }
 }
 
-/** A pinned kernel if the profile has one, otherwise the newest matching browser on the PC. */
+/** Resolve only app-managed builds; never silently substitute an installed system browser. */
 async function resolveExecutable(profile: Profile): Promise<{ exe: string; engine: string; version: string }> {
   if (profile.kernelId) {
-    const exe = resolveKernelExe(profile.kernelId);
-    if (exe) {
-      const version = profile.kernelId.split('-')[1] ?? profile.browserVersion;
-      return { exe, engine: profile.engine, version };
-    }
-    throw new Error(
-      `This profile is pinned to a build that is not installed (${profile.kernelId}). ` +
-        'Install it from the Browsers page, or pin the profile to a build you have.',
-    );
+    const build = installedKernels().find((item) => item.id === profile.kernelId && item.engine === profile.engine);
+    const exe = build && resolveKernelExe(build.id);
+    if (build && exe) return { exe, engine: build.engine, version: build.version };
+    throw new Error(`The selected ${profile.engine} build is not installed. Install it from the Browsers page.`);
   }
-
-  const profileAgain = findProfile(profile.id);
-  const preferred = profileAgain?.engine ?? 'chrome';
-  const detected = await detectInstalledBrowsers();
-  const exact = detected.find((b) => b.engine === preferred);
-  const fallback = exact ?? detected.find((b) => b.engine === 'chrome' || b.engine === 'chromium') ?? detected[0];
-
-  if (!fallback) {
-    throw new Error(
-      'No browser was found on this PC. Install one from the Browsers page, or install Chrome and try again.',
-    );
+  const builds = installedKernels().filter((item) => item.engine === profile.engine)
+    .sort((a, b) => compareVersions(b.version, a.version));
+  for (const build of builds) {
+    const exe = resolveKernelExe(build.id);
+    if (exe) return { exe, engine: build.engine, version: build.version };
   }
-
-  return { exe: fallback.path, engine: fallback.engine, version: fallback.version };
+  throw new Error(`No app-managed ${profile.engine} build is installed. Install one from the Browsers page.`);
 }

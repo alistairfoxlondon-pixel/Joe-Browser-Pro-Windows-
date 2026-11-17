@@ -33,13 +33,13 @@ export function ensureTrash(): void {
 export function moveToTrash(profile: Profile): string {
   ensureTrash();
   const file = path.join(DIR(), `${stamp()}-${profile.id}.json`);
-  fs.writeFileSync(file, JSON.stringify({ profile, deletedAt: new Date().toISOString() }, null, 2), 'utf8');
+  const parked = path.join(DIR(), `${profile.id}.data`);
+  if (fs.existsSync(parked)) throw new Error('A backup for this profile already exists in the recycle bin.');
+  fs.writeFileSync(file, JSON.stringify({ profile, deletedAt: new Date().toISOString() }, null, 2), { encoding: 'utf8', flag: 'wx' });
 
   const dataDir = Paths.profileData(profile.id);
   if (fs.existsSync(dataDir)) {
-    const parked = path.join(DIR(), `${profile.id}.data`);
     try {
-      if (fs.existsSync(parked)) fs.rmSync(parked, { recursive: true, force: true });
       fs.renameSync(dataDir, parked);
     } catch (error) {
       // A running browser holds its own folder; leaving the data in place is recoverable, whereas
@@ -87,48 +87,41 @@ export function listTrash(): TrashItem[] {
  * The record keeps its own id, so the browser data that was renamed aside lines up with it and
  * the profile comes back with its logins intact.
  */
-const restoreCache = new Map<string, Profile>();
-
-export function restore(file: string): string {
+export function restore(file: string, restoreRecord: (profile: Profile) => void): string {
   const source = path.join(DIR(), path.basename(file));
   if (!fs.existsSync(source)) throw new Error('That entry is no longer in the bin.');
-
   const parsed = JSON.parse(fs.readFileSync(source, 'utf8')) as { profile?: Profile };
   const profile = parsed.profile;
-  if (!profile?.id) throw new Error('That entry has no profile in it.');
+  if (!profile?.id || !/^[A-Za-z0-9_-]{1,128}$/.test(profile.id)) throw new Error('That entry has an invalid profile identifier.');
 
   const parked = path.join(DIR(), `${profile.id}.data`);
   const target = Paths.profileData(profile.id);
-  try {
-    if (fs.existsSync(parked)) {
-      if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
-      fs.mkdirSync(Paths.profiles, { recursive: true });
-      fs.renameSync(parked, target);
-    }
-  } catch (error) {
-    log.warn('the restored profile’s browser data could not be moved back', error);
+  let moved = false;
+  if (fs.existsSync(parked)) {
+    if (fs.existsSync(target)) throw new Error('Profile data already exists; restore was cancelled to protect it.');
+    fs.mkdirSync(Paths.profiles, { recursive: true });
+    fs.renameSync(parked, target);
+    moved = true;
   }
-
-  restoreCache.set(path.basename(file), profile);
-  fs.rmSync(source, { force: true });
+  try {
+    restoreRecord(profile);
+  } catch (error) {
+    if (moved) {
+      try { fs.renameSync(target, parked); } catch (rollbackError) { log.error('Could not return profile data to the recycle bin', rollbackError); }
+    }
+    throw error;
+  }
+  // The record is now durable. A failure to remove the backup is safe and can be cleaned up later.
+  try { fs.rmSync(source, { force: true }); } catch (error) { log.warn('Restored profile backup could not be removed', error); }
   return profile.id;
 }
 
 /** Read the record out of a trash entry without restoring it. */
 export function peek(file: string): Profile | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(DIR(), path.basename(file)), 'utf8')) as {
-      profile?: Profile;
-    };
+    const parsed = JSON.parse(fs.readFileSync(path.join(DIR(), path.basename(file)), 'utf8')) as { profile?: Profile };
     return parsed.profile ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** The record inside an entry, after the restore has moved it out - the caller re-creates it. */
-export function peekBackup(file: string): Profile | null {
-  return restoreCache.get(path.basename(file)) ?? null;
+  } catch { return null; }
 }
 
 export function emptyTrash(): number {

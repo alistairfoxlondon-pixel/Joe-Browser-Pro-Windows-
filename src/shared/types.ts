@@ -352,6 +352,8 @@ export interface ExtensionItem {
   storeUrl: string;
   /** Absolute path of the icon inside the package, or '' when it ships none. */
   iconPath: string;
+  /** Safe, bounded image data for the sandboxed renderer. */
+  iconDataUrl?: string;
   /** The id the extension is known by on the store, recovered from the manifest key. */
   storeId: string;
   /** True when this is one of the app's own written extensions. */
@@ -559,7 +561,8 @@ export interface Bridge {
   getProfile(id: string): Promise<Profile | null>;
   /** The stored profile plus a sentence describing anything it shares with the workspace. */
   getProfileRelation(id: string): Promise<{ profile: Profile; relation: string }>;
-  createProfile(input: Partial<Profile>): Promise<Profile>;
+  draftProfile(input: Partial<Profile>): Promise<Profile>;
+  createProfile(input: Partial<Profile> & { preserveFingerprint?: boolean }): Promise<Profile>;
   updateProfile(id: string, patch: Partial<Profile>): Promise<Profile>;
   deleteProfile(id: string): Promise<void>;
   duplicateProfile(id: string): Promise<Profile>;
@@ -594,7 +597,9 @@ export interface Bridge {
   checkProxy(config: ProxyConfig, password?: string): Promise<ProxyCheckResult>;
   checkDirect(): Promise<ProxyCheckResult>;
   listProxies(): Promise<ProxyEntry[]>;
-  saveProxy(entry: Partial<ProxyEntry> & { config: ProxyConfig }): Promise<ProxyEntry>;
+  /** Resolve credentials only when the user selects a saved proxy. */
+  getSavedProxy(id: string): Promise<ProxyEntry>;
+  saveProxy(entry: Partial<ProxyEntry> & { config: ProxyConfig; replacePassword?: boolean }): Promise<ProxyEntry>;
   deleteProxy(id: string): Promise<void>;
   importProxyList(text: string): Promise<{ added: number; failed: string[] }>;
   testProxyEntry(id: string): Promise<ProxyEntry>;
@@ -609,7 +614,7 @@ export interface Bridge {
 
   /* profiles: import / export */
   exportProfiles(): Promise<string>;
-  importProfiles(): Promise<number>;
+  importProfiles(maxProfiles?: number): Promise<number>;
 
   /* fingerprint */
   runLeakCheck(id: string): Promise<LeakReport>;

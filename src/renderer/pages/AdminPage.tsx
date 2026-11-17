@@ -23,6 +23,7 @@ import {
   cloud,
   PLAN_MONTHLY_SECONDS,
   PLAN_YEARLY_SECONDS,
+  PartialCodeCreationError,
   type AdminCode,
   type AdminUser,
   type CreatedCode,
@@ -71,6 +72,7 @@ export function AdminPage(): ReactNode {
   const toast = useToast();
   const subscription = useSubscription();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [codes, setCodes] = useState<AdminCode[] | null>(null);
   const [trialClaims, setTrialClaims] = useState(0);
   const [search, setSearch] = useState('');
@@ -83,6 +85,7 @@ export function AdminPage(): ReactNode {
   const loaded = useRef(false);
 
   const load = useCallback(async () => {
+    setLoadError(false);
     try {
       const [userList, codeList, claims] = await Promise.all([
         cloud().adminListUsers(),
@@ -93,6 +96,7 @@ export function AdminPage(): ReactNode {
       setCodes(codeList);
       setTrialClaims(claims.length);
     } catch (error) {
+      setLoadError(true);
       toast.error('Admin panel', messageOf(error));
     }
   }, [toast]);
@@ -132,7 +136,11 @@ export function AdminPage(): ReactNode {
       toast.success(`${generated.length} license key${generated.length === 1 ? '' : 's'} generated`);
       await load();
     } catch (error) {
-      toast.error('Could not generate keys', messageOf(error));
+      if (error instanceof PartialCodeCreationError && error.created.length) {
+        setCreated(error.created);
+        await load();
+      }
+      toast.error('Could not generate all keys', messageOf(error));
     } finally {
       setBusy(false);
     }
@@ -198,16 +206,6 @@ export function AdminPage(): ReactNode {
     }
   };
 
-  if (users === null) {
-    return (
-      <div className="content">
-        <div className="empty">
-          <CircularProgress size={26} thickness={4} />
-        </div>
-      </div>
-    );
-  }
-
   // Defence in depth: the rail only offers this page to administrators, but the page itself
   // refuses to issue keys to an account the server does not call one. All hooks above run
   // unconditionally; this is the render gate.
@@ -222,6 +220,16 @@ export function AdminPage(): ReactNode {
               <div style={{ marginTop: 2 }}>This section is only open to the administrator of the Joe Browser project.</div>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (users === null) {
+    return (
+      <div className="content">
+        <div className="empty">
+          {loadError ? <button className="btn btn-soft" type="button" onClick={() => void load()}>Retry</button> : <CircularProgress size={26} thickness={4} />}
         </div>
       </div>
     );

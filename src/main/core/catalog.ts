@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import type { DetectedBrowser, InstalledKernel, KernelBuild } from '../../shared/types';
 import { Paths } from './paths';
@@ -211,6 +212,14 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/** Kernel IDs are directory names, never paths supplied by a renderer. */
+function kernelDirectory(id: string): string {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(id) || id === '.' || id === '..') {
+    throw new Error('Invalid browser build ID.');
+  }
+  return path.join(Paths.kernels, id);
+}
+
 function installedIndex(): Map<string, InstalledKernel> {
   const dir = Paths.kernels;
   const map = new Map<string, InstalledKernel>();
@@ -221,7 +230,9 @@ function installedIndex(): Map<string, InstalledKernel> {
     const metaFile = path.join(dir, entry.name, 'kernel.json');
     if (!fs.existsSync(metaFile)) continue;
     const meta = readJson<InstalledKernel | null>(metaFile, null);
-    if (meta) map.set(meta.id, meta);
+    if (meta && meta.id === entry.name) {
+      try { if (resolveKernelExe(meta.id)) map.set(meta.id, meta); } catch { /* Ignore malformed metadata. */ }
+    }
   }
   return map;
 }
@@ -287,12 +298,13 @@ export async function downloadKernel(
   build: KernelBuild,
   onProgress: (received: number, total: number) => void,
 ): Promise<InstalledKernel> {
-  const targetDir = path.join(Paths.kernels, build.id);
+  const targetDir = kernelDirectory(build.id);
   if (fs.existsSync(targetDir)) {
     const existing = readJson<InstalledKernel | null>(path.join(targetDir, 'kernel.json'), null);
     if (existing) return existing;
   }
 
+  if (fs.existsSync(targetDir)) throw new Error('The browser build folder already exists but is invalid. Remove it before reinstalling.');
   if (!build.downloadUrl) throw new Error('This build has no download address.');
   if (!build.downloadUrl.startsWith('https://')) {
     throw new Error('Refusing to download a build over a connection that is not HTTPS.');
@@ -302,41 +314,27 @@ export async function downloadKernel(
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'joe-kernel-'));
   const archivePath = path.join(tempDir, archiveNameFor(build));
 
-  await downloadFile(build.downloadUrl, archivePath, onProgress);
-
-  const staging = `${targetDir}.staging-${Date.now()}`;
-  fs.mkdirSync(staging, { recursive: true });
-  await extract(archivePath, staging);
-
-  // The vendor archives wrap everything in one folder; lift the launcher's folder up so the
-  // install path is predictable regardless of vendor.
-  const exePath = locateLauncher(staging, build.engine);
-  if (!exePath) {
+  const staging = `${targetDir}.staging-${crypto.randomUUID()}`;
+  try {
+    await downloadFile(build.downloadUrl, archivePath, onProgress);
+    fs.mkdirSync(staging, { recursive: true });
+    await extract(archivePath, staging);
+    const exePath = locateLauncher(staging, build.engine);
+    if (!exePath) throw new Error('The downloaded archive did not contain a browser launcher.');
+    const meta: InstalledKernel = {
+      id: build.id, engine: build.engine, version: build.version,
+      path: targetDir, exePath: path.join(targetDir, path.relative(staging, exePath)),
+      installedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(path.join(staging, 'kernel.json'), JSON.stringify(meta, null, 2), 'utf8');
+    // Do not delete a competing install. A second download can be safely retried.
+    if (fs.existsSync(targetDir)) throw new Error('This browser build was installed by another request.');
+    fs.renameSync(staging, targetDir);
+    return meta;
+  } finally {
     fs.rmSync(staging, { recursive: true, force: true });
-    throw new Error('The downloaded archive did not contain a browser launcher.');
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-
-  const meta: InstalledKernel = {
-    id: build.id,
-    engine: build.engine,
-    version: build.version,
-    path: path.dirname(exePath),
-    exePath,
-    installedAt: new Date().toISOString(),
-  };
-
-  fs.writeFileSync(path.join(staging, 'kernel.json'), JSON.stringify(meta, null, 2), 'utf8');
-  fs.rmSync(targetDir, { recursive: true, force: true });
-  fs.renameSync(staging, targetDir);
-  fs.rmSync(tempDir, { recursive: true, force: true });
-
-  // The metadata sits beside the install; rewrite it with the final path rather than the staging
-  // path so a moved install is still found.
-  meta.path = targetDir;
-  meta.exePath = path.join(targetDir, path.relative(staging, exePath));
-  writeJson(path.join(targetDir, 'kernel.json'), meta);
-
-  return meta;
 }
 
 function archiveNameFor(build: KernelBuild): string {
@@ -451,19 +449,22 @@ function locateLauncher(root: string, engine: string): string | null {
 }
 
 export async function removeKernel(id: string): Promise<void> {
-  const dir = path.join(Paths.kernels, id);
-  if (!dir.startsWith(Paths.kernels)) throw new Error('Refusing to delete a folder outside the kernel store.');
+  const dir = kernelDirectory(id);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
 export function resolveKernelExe(id: string): string | null {
-  const meta = readJson<InstalledKernel | null>(path.join(Paths.kernels, id, 'kernel.json'), null);
-  if (!meta) return null;
-  if (fs.existsSync(meta.exePath)) return meta.exePath;
-
-  // The install may have been moved; re-resolve inside its own folder before giving up.
-  const found = locateLauncher(path.join(Paths.kernels, id), meta.engine);
-  return found;
+  const dir = kernelDirectory(id);
+  const meta = readJson<InstalledKernel | null>(path.join(dir, 'kernel.json'), null);
+  if (!meta || meta.id !== id) return null;
+  // Never execute paths taken from metadata outside the managed build folder.
+  const candidate = path.resolve(meta.exePath || '');
+  if (candidate.startsWith(path.resolve(dir) + path.sep) && fs.existsSync(candidate)) {
+    const realDir = fs.realpathSync(dir);
+    const realCandidate = fs.realpathSync(candidate);
+    if (realCandidate.startsWith(realDir + path.sep) && fs.statSync(realCandidate).isFile()) return realCandidate;
+  }
+  return locateLauncher(dir, meta.engine);
 }
 
 /** Browsers already on this PC, so a profile can use one as it is. */

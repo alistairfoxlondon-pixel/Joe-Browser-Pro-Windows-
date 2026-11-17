@@ -1,3 +1,4 @@
+import { buildHumanPasteScript } from './humanPaste';
 import type { FingerprintConfig, ToolConfig } from '../../shared/types';
 import { fontsFor } from './fingerprint';
 import { buildIdentity } from './ua';
@@ -91,10 +92,6 @@ export function buildFingerprintScript(payload: InjectPayload): string {
       fp.geoLat && fp.geoLng
         ? { lat: Number(fp.geoLat), lng: Number(fp.geoLng) }
         : null,
-    humanPaste: tools.humanPaste,
-    humanPasteSpeed: tools.humanPasteSpeed,
-    enableRightClick: tools.enableRightClick,
-    unlockSelection: tools.unlockSelection,
   };
 
   return `(function(){'use strict';
@@ -755,62 +752,8 @@ try {
   }
 } catch(e){}
 
-/* ---- built-in page tools ---- */
-try {
-  if (C.enableRightClick || C.unlockSelection) {
-    ['contextmenu', 'copy', 'cut', 'selectstart', 'mousedown', 'mouseup', 'dragstart', 'keydown'].forEach(function(type){
-      win.addEventListener(type, function(event){
-        if (type === 'keydown') {
-          if (C.humanPaste) return;
-          event.stopPropagation();
-          return;
-        }
-        event.stopPropagation();
-      }, true);
-    });
-    if (C.unlockSelection) {
-      var style = document.createElement('style');
-      style.textContent = '*{user-select:text !important;-webkit-user-select:text !important;}';
-      (document.head || document.documentElement).appendChild(style);
-    }
-  }
-} catch(e){}
-
-/* ---- paste as human: type the clipboard out with a human rhythm ---- */
-try {
-  if (C.humanPaste) {
-    var speeds = { relaxed: [58, 165], natural: [32, 95], fast: [12, 44], instant: [0, 4] };
-    var speed = speeds[C.humanPasteSpeed] || speeds.natural;
-    var guardKey = '__joeHumanPaste';
-    if (!win[guardKey]) {
-      define(win, guardKey, { value: true, enumerable: false, configurable: false });
-      document.addEventListener('paste', function(event){
-        var target = event.target;
-        if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-        var text = event.clipboardData && event.clipboardData.getData('text/plain');
-        if (!text) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        var index = 0;
-        function step(){
-          if (index >= text.length) return;
-          var ch = text.charAt(index++);
-          if (target.isContentEditable) {
-            document.execCommand('insertText', false, ch);
-          } else {
-            var start = target.selectionStart || 0;
-            var value = target.value || '';
-            target.value = value.slice(0, start) + ch + value.slice(start);
-            target.selectionStart = target.selectionEnd = start + 1;
-          }
-          target.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch }));
-          setTimeout(step, speed[0] + rnd() * (speed[1] - speed[0]));
-        }
-        step();
-      }, true);
-    }
-  }
-} catch(e){}
+/* ---- optional built-in human-paced paste ---- */
+${buildHumanPasteScript(tools.humanPaste, tools.humanPasteSpeed)}
 
 /* ---- geolocation agreement ---- */
 try {

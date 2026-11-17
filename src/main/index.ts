@@ -171,6 +171,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 620,
     show: false,
+    icon: nativeImage.createFromDataURL(__TRAY_ICON__),
     backgroundColor: settings.theme === 'light' ? '#f6f7fa' : '#0e1014',
     // The window frame is drawn by the app: the title bar carries the page breadcrumb and the
     // running counter, which is a fact about the whole app rather than about one page.
@@ -263,6 +264,7 @@ ipcMain.handle('win:maximize', () => {
 ipcMain.handle('win:close', () => mainWindow?.close());
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.joebrowser.app');
   Paths.ensure(Paths.root, Paths.profiles, Paths.kernels, Paths.logs, Paths.extensions, Paths.history, Paths.trash);
   nativeTheme.themeSource = getSettings().theme;
 

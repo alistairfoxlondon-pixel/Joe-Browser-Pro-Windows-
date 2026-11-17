@@ -405,7 +405,7 @@ const EN: Table = {
   'ext.enabled': 'Enabled',
   'ext.disabled': 'Disabled',
   'ext.byUrl': 'Add by store link',
-  'ext.byUrl.hint': 'Paste a Chrome Web Store link. The store page opens so you can download it, then import the .crx.',
+  'ext.byUrl.hint': 'Install from an official Chrome Web Store listing. Import a local CRX or ZIP separately.',
   'ext.store': 'Open the store',
   'ext.version': 'Version {v}',
   'ext.source.builtin': 'Built in',

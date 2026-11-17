@@ -3,7 +3,7 @@ import type { AppSettings, ExtensionItem, ExtensionReport } from '../../shared/t
 import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
-import { Button, Chip, EmptyState, Toggle, useConfirm, useToast } from '../components/UI';
+import { Button, Chip, EmptyState, Modal, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
 
 /**
@@ -30,16 +30,14 @@ export function ExtensionsPage({
 
   const [report, setReport] = useState<ExtensionReport | null>(null);
   const [busy, setBusy] = useState('');
-  const [loading, setLoading] = useState(true);
   const [storeUrl, setStoreUrl] = useState('');
+  const [storeDialog, setStoreDialog] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setReport(await bridge().listExtensions());
     } catch (error) {
       toast.error(t('err.generic'), messageOf(error));
-    } finally {
-      setLoading(false);
     }
   }, [t, toast]);
 
@@ -73,6 +71,7 @@ export function ExtensionsPage({
           <div className="sub">{t('ext.sub')}</div>
         </div>
         <div className="header-actions">
+          <Button variant="soft" icon="link" onClick={() => setStoreDialog(true)}>{t('ext.byUrl')}</Button>
           <Button variant="soft" icon="folder" onClick={() => void act('folder', () => bridge().openExtensionFolder())}>
             {t('ext.openfolder')}
           </Button>
@@ -102,31 +101,6 @@ export function ExtensionsPage({
                 detail={t('ed.tools.customext.hint')}
               />
             </div>
-          </div>
-
-          <div className="section-label">{t('ext.firstparty')}</div>
-          <div className="rows">
-            {(report?.firstParty ?? []).map((item) => (
-              <div className="row" key={item.id}>
-                <div className="row-icon" style={{ background: 'var(--accent-soft)', color: 'var(--accent-hi)' }}>
-                  <Icon name="code" />
-                </div>
-                <div className="row-main">
-                  <div className="row-title">
-                    {item.name}
-                    <Chip tone="accent">{t('ext.source.builtin')}</Chip>
-                  </div>
-                  <div className="row-sub">{item.description}</div>
-                </div>
-                <Chip tone={item.enabled ? 'ok' : 'muted'}>{item.enabled ? t('ext.enabled') : t('ext.disabled')}</Chip>
-              </div>
-            ))}
-            {loading && !report ? (
-              <div className="row">
-                <span className="spinner" style={{ color: 'var(--accent)' }} />
-                <span className="muted">{t('generic.loading')}</span>
-              </div>
-            ) : null}
           </div>
 
           <div className="section-label">{t('ext.included')}</div>
@@ -178,7 +152,7 @@ export function ExtensionsPage({
               body={t('ext.byUrl.hint')}
               action={
                 <div className="cluster" style={{ justifyContent: 'center' }}>
-                  <Button variant="primary" icon="link" onClick={() => void act('url', () => bridge().addExtensionByUrl('https://chromewebstore.google.com/'), t('ext.store'))}>
+                  <Button variant="primary" icon="link" onClick={() => setStoreDialog(true)}>
                     {t('ext.byUrl')}
                   </Button>
                   <Button variant="soft" icon="folder" onClick={() => void act('folder', () => bridge().addExtensionFolder(), t('ext.addfolder'))}>
@@ -215,7 +189,7 @@ export function ExtensionsPage({
               <div className="tile" key={item.url} style={{ minHeight: 96 }}>
                 <div className="spread" style={{ alignItems: 'flex-start' }}>
                   <div className="tile-icon">
-                    <Icon name="extensions" />
+                    {item.icon ? <img src={item.icon} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} /> : <Icon name="extensions" />}
                   </div>
                   <Chip tone="muted">{t('ext.store')}</Chip>
                 </div>
@@ -224,48 +198,33 @@ export function ExtensionsPage({
                   <div className="tile-desc">{item.description}</div>
                 </div>
                 <div className="tile-foot">
-                  <Button size="sm" variant="soft" icon="external" onClick={() => void bridge().openExternal(item.url)}>
-                    {t('ext.store')}
+                  <Button size="sm" variant="soft" icon="download" busy={busy === item.url} disabled={!!busy}
+                    onClick={() => void act(item.url, () => bridge().addExtensionByUrl(item.url), item.name)}>
+                    {t('br.download')}
                   </Button>
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="section-label">{t('ext.byUrl')}</div>
-          <div className="spread">
-            <input
-              className="input mono grow"
-              value={storeUrl}
-              placeholder="https://chromewebstore.google.com/detail/…"
-              onChange={(event) => setStoreUrl(event.target.value)}
-              spellCheck={false}
-            />
-            <Button
-              variant="soft"
-              icon="link"
-              busy={busy === 'byUrl'}
-              onClick={() =>
-                void act(
-                  'byUrl',
-                  async () => {
-                    const item = await bridge().addExtensionByUrl(storeUrl).catch((error: unknown) => {
-                      toast.warn(t('ext.store'), messageOf(error));
-                      return null;
-                    });
-                    if (item) setStoreUrl('');
-                  },
-                  t('ext.addurl'),
-                )
-              }
-            >
-              {t('ext.addurl')}
-            </Button>
-          </div>
-          <div className="hint" style={{ marginTop: 6 }}>{t('ext.byUrl.hint')}</div>
         </div>
       </div>
 
+      {storeDialog ? (
+        <Modal title={t('ext.byUrl')} onClose={() => setStoreDialog(false)} footer={
+          <>
+            <Button variant="ghost" onClick={() => setStoreDialog(false)}>{t('btn.cancel')}</Button>
+            <Button variant="primary" busy={busy === 'byUrl'} onClick={() => void act('byUrl', async () => {
+              await bridge().addExtensionByUrl(storeUrl);
+              setStoreUrl('');
+              setStoreDialog(false);
+            }, t('ext.addurl'))}>{t('ext.addurl')}</Button>
+          </>
+        }>
+          <input className="input mono" aria-label={t('ext.byUrl')} value={storeUrl}
+            placeholder="https://chromewebstore.google.com/detail/…" onChange={(event) => setStoreUrl(event.target.value)} spellCheck={false} />
+        </Modal>
+      ) : null}
       {confirm.dialog}
     </>
   );
@@ -286,7 +245,7 @@ function ExtensionRow({
   return (
     <div className="row">
       <div className="row-icon">
-        {item.iconPath ? <img src={`file://${item.iconPath}`} alt="" /> : <Icon name="extensions" />}
+        {item.iconDataUrl ? <img src={item.iconDataUrl} alt="" /> : <Icon name="extensions" />}
       </div>
       <div className="row-main">
         <div className="row-title">

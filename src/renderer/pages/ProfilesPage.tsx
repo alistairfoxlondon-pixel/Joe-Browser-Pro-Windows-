@@ -77,7 +77,7 @@ export function ProfilesPage({
   const limitReached = subscription.tier === 'free' && profiles.length >= FREE_PROFILE_LIMIT;
   const [activateOpen, setActivateOpen] = useState(false);
   const openCreate = () => (limitReached ? setActivateOpen(true) : setCreating(true));
-  const openBatch = () => (limitReached ? setActivateOpen(true) : setBatching(true));
+  const openBatch = () => (subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true));
   const [busy, setBusy] = useState<string>('');
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -384,13 +384,14 @@ export function ProfilesPage({
 
   const duplicate = useCallback(
     async (profile: ProfileSummary) => {
+      if (limitReached) { setActivateOpen(true); return; }
       await run(profile.id, async () => {
         const copy = await bridge().duplicateProfile(profile.id);
         await refresh();
         toast.success(t('btn.duplicate'), copy.name);
       });
     },
-    [run, refresh, t, toast],
+    [run, refresh, t, toast, limitReached],
   );
 
   const reroll = useCallback(
@@ -639,7 +640,7 @@ export function ProfilesPage({
                     {t('btn.batch')}
                   </Button>
                   <Button variant="ghost" icon="upload" onClick={() => void run('import', async () => {
-                    const count = await bridge().importProfiles();
+                    const count = await bridge().importProfiles(subscription.tier === 'free' ? Math.max(0, FREE_PROFILE_LIMIT - profiles.length) : undefined);
                     await refresh();
                     if (count > 0) toast.success(t('btn.import'), String(count));
                   })}>
@@ -853,7 +854,7 @@ export function ProfilesPage({
                 <button
                   className="btn btn-sm btn-ghost"
                   onClick={() => void run('import', async () => {
-                    const count = await bridge().importProfiles();
+                    const count = await bridge().importProfiles(subscription.tier === 'free' ? Math.max(0, FREE_PROFILE_LIMIT - profiles.length) : undefined);
                     await refresh();
                     if (count > 0) toast.success(t('btn.import'), String(count));
                   })}

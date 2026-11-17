@@ -90,7 +90,7 @@ export function SettingsPage({
       </header>
 
       <div className="content">
-        <div className="content-inner" style={{ maxWidth: 1080 }}>
+        <div className="content-inner">
           <div className="section-label">{t('set.appearance')}</div>
           <div className="panel">
             <div className="spread" style={{ flexWrap: 'wrap', gap: 20 }}>

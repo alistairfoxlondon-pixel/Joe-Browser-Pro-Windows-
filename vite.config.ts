@@ -22,7 +22,7 @@ function contentSecurityPolicy(): Plugin {
     "font-src 'self' data:",
     // The licensing service is the only remote origin the window may reach: account sign-in and
     // entitlement reads go through it. Everything else stays on this PC.
-    "connect-src 'self' https://djlmbsaltjqsqpwqdvsg.supabase.co wss://djlmbsaltjqsqpwqdvsg.supabase.co",
+    "connect-src 'self' https://rajxyaatbvlrxxzjntmo.supabase.co wss://rajxyaatbvlrxxzjntmo.supabase.co",
     "object-src 'none'",
     "frame-src 'none'",
     "base-uri 'none'",

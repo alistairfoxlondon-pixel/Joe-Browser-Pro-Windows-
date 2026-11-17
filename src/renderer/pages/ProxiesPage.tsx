@@ -1,3 +1,4 @@
+import { parseProxyLine } from '../../shared/parseProxy';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { NetworkReport, ProfileSummary, ProxyBatchRow, ProxyConfig, ProxyEntry } from '../../shared/types';
 import { PROXY_TYPES } from '../../shared/types';
@@ -20,6 +21,9 @@ import {
   when,
 } from '../components/UI';
 import { messageOf } from '../util';
+import { useSubscription } from '../cloud/subscription';
+import { FREE_PROFILE_LIMIT } from '../cloud/client';
+import { ActivateDialog } from '../components/ActivateDialog';
 
 /**
  * The proxy vault.
@@ -43,6 +47,8 @@ export function ProxiesPage({
   const { t } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
+  const subscription = useSubscription();
+  const [activateOpen, setActivateOpen] = useState(false);
 
   const [entries, setEntries] = useState<ProxyEntry[]>([]);
   const [query, setQuery] = useState('');
@@ -119,6 +125,7 @@ export function ProxiesPage({
   };
 
   const createProfile = async (entry: ProxyEntry) => {
+    if (subscription.tier === 'free' && profiles.length >= FREE_PROFILE_LIMIT) { setActivateOpen(true); return; }
     try {
       const created = await bridge().createProfileFromProxy(entry.id);
       await refreshProfiles();
@@ -372,6 +379,7 @@ export function ProxiesPage({
 
       {batchTesting ? <BatchTestModal onClose={() => setBatchTesting(false)} /> : null}
 
+      <ActivateDialog open={activateOpen} onClose={() => setActivateOpen(false)} onActivated={() => void subscription.refresh()} />
       {confirm.dialog}
     </>
   );
@@ -521,6 +529,7 @@ function ProxyEditor({
   const [port, setPort] = useState(entry?.config.port ?? 8080);
   const [user, setUser] = useState(entry?.config.user ?? '');
   const [password, setPassword] = useState(entry?.password ?? '');
+  const [replacePassword, setReplacePassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState('');
@@ -570,7 +579,7 @@ function ProxyEditor({
     }
     setSaving(true);
     try {
-      await bridge().saveProxy({ id: entry?.id, name, note, password, config: config() });
+      await bridge().saveProxy({ id: entry?.id, name, note, password, replacePassword, config: config() });
       toast.success(t('btn.save'), name || `${host}:${port}`);
       onSaved();
     } catch (error) {
@@ -616,7 +625,13 @@ function ProxyEditor({
           </Field>
 
           <Field label={t('ed.host')}>
-            <input className="input mono" value={host} onChange={(event) => setHost(event.target.value)} placeholder="gate.example.com" spellCheck={false} />
+            <input className="input mono" value={host} onChange={(event) => setHost(event.target.value)} onPaste={(event) => {
+              const parsed = parseProxyLine(event.clipboardData.getData('text'));
+              if (!parsed) return;
+              event.preventDefault();
+              setType(parsed.type ?? 'http'); setHost(parsed.host ?? ''); setPort(parsed.port ?? 0);
+              setUser(parsed.user ?? ''); setPassword(parsed.password ?? ''); setReplacePassword(true);
+            }} placeholder="gate.example.com" spellCheck={false} />
           </Field>
 
           <Field label={t('ed.port')}>
@@ -628,7 +643,7 @@ function ProxyEditor({
           </Field>
 
           <Field label={t('ed.pass')} hint={t('proxy.password.hint')}>
-            <input className="input mono" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
+            <input className="input mono" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setReplacePassword(true); }} autoComplete="new-password" />
           </Field>
 
           <Field label={t('proxy.note')} hint={t('proxy.note.hint')} span={2}>

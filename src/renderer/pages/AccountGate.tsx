@@ -78,7 +78,7 @@ export function AccountGate({
       <div className="gate-form">
         <div className="gate-form-inner">
           <h1 className="gate-title">{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
-          <p className="gate-sub">{mode === 'register' ? 'A 7-day trial starts with your first sign-in.' : 'Sign in to activate your license and sync your seats.'}</p>
+          <p className="gate-sub">{mode === 'register' ? 'Confirm your email to start your 7-day trial.' : 'Sign in to manage your subscription.'}</p>
 
           <div className="gate-tabs">
             <Segmented<'signin' | 'register'>

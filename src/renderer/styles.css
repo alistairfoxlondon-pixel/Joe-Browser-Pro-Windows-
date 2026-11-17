@@ -13,13 +13,7 @@
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  /*
-   * Telenor is the brand face. The licensed files are not redistributed in this repository, so
-   * the stack names Telenor first (used automatically once the font is installed, or placed in
-   * assets/fonts and registered with @font-face below) and then Fira Sans - the bundled humanist
-   * sans with the same open apertures and proportions - and finally the Windows UI stack.
-   */
-  --font: 'Telenor', 'Fira Sans', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  --font: 'Fira Sans', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
   --mono: 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
 
   --r-xs: 4px;
@@ -3012,3 +3006,11 @@ p {
 .lock-field { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; }
 .lock-field .input { width: 100%; text-align: center; letter-spacing: 0.4em; font-size: 19px; }
 .lock-hint { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 11px; }
+
+/* Keep action-heavy pages and dialogs usable at narrow desktop window sizes. */
+.header-actions { flex-wrap: wrap; min-width: 0; }
+@media (max-width: 760px) {
+  .header-actions { justify-content: flex-start; }
+  .header-actions .search { flex: 1 1 100%; }
+  .modal-foot { flex-wrap: wrap; }
+}
