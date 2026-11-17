@@ -400,7 +400,9 @@ function extract(archive: string, into: string): Promise<void> {
       const command = isTar
         ? { file: 'tar', args: ['-xjf', archive, '-C', into] }
         : { file: 'tar', args: ['-xf', archive, '-C', into] };
-      execFile(command.file, command.args, { windowsHide: true }, (error, _stdout, stderr) => {
+      // Git for Windows also ships GNU tar; it treats C: paths as remote hosts. Use Windows' bsdtar.
+      const systemTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+      execFile(systemTar, command.args, { windowsHide: true }, (error, _stdout, stderr) => {
         if (error) reject(new Error(`Could not unpack the archive: ${stderr || error.message}`));
         else resolve();
       });
