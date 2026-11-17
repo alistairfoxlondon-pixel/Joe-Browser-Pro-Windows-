@@ -720,9 +720,7 @@ export function ProfileEditor({
         {tab === 'proxy' ? (
           <div className="stack">
             <div className="spread">
-              <span className="muted" style={{ fontSize: 12.5 }}>
-                {t('ed.proxy.sub')}
-              </span>
+              <span />
               <div className="cluster">
                 {proxies.length > 0 ? (
                   <select
@@ -788,6 +786,15 @@ export function ProfileEditor({
                       className="input mono"
                       value={draft.proxy.host}
                       onChange={(event) => patchProxy({ host: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'b') return;
+                        event.preventDefault(); event.stopPropagation();
+                        void bridge().proxyClipboard().then((parsed) => {
+                          if (!parsed) { toast.warn('Invalid proxy', 'Use host:port or host:port:user:password.'); return; }
+                          passwordChanged.current = true;
+                          patchProxy({ ...parsed, passwordEnc: '' });
+                        }).catch((error: unknown) => toast.error('Clipboard', messageOf(error)));
+                      }}
                       onPaste={(event) => {
                         const parsed = parseProxyLine(event.clipboardData.getData('text'));
                         if (!parsed) return;
@@ -820,7 +827,7 @@ export function ProfileEditor({
                     />
                   </Field>
 
-                  <Field label={t('ed.pass')} hint={t('proxy.password.hint')}>
+                  <Field label={t('ed.pass')}>
                     <input
                       className="input mono"
                       type="password"

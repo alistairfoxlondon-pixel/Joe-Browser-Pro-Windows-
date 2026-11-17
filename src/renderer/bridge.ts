@@ -1,3 +1,4 @@
+import { parseProxyLine } from '../shared/parseProxy';
 import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
 import type {
   AccountSummary,
@@ -895,11 +896,9 @@ export const mockBridge: Bridge = {
     return mockBridge.createProfile({ name: entry.name, proxy: entry.config } as Partial<Profile>);
   },
 
-  async proxyLine(line: string) {
-    const parts = line.trim().split(':');
-    if (parts.length < 2) return null;
-    return { type: 'http' as const, host: parts[0]!, port: Number(parts[1]) || 8080 };
-  },
+  async proxyLine(line: string) { return parseProxyLine(line); },
+  async proxyClipboard() { return parseProxyLine(await navigator.clipboard.readText()); },
+  async checkIpRisk() { throw new Error('IP risk lookup is available in the desktop app.'); },
 
   async networkReport(): Promise<NetworkReport> {
     await delay(300);

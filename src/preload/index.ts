@@ -74,6 +74,8 @@ const bridge = {
   testProxyLines: (text: string) => invoke('proxy:testLines', text),
   createProfileFromProxy: (id: string) => invoke('proxy:createProfile', id),
   proxyLine: (line: string) => invoke('proxy:parseLine', line),
+  proxyClipboard: () => invoke('proxy:clipboard'),
+  checkIpRisk: (ip: string) => invoke('proxy:risk', ip),
   networkReport: (proxyId?: string) => invoke('proxy:network', proxyId),
 
   /* ---------------------------------------------------------------- fingerprint */

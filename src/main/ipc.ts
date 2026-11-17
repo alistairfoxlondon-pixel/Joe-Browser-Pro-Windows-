@@ -1,3 +1,4 @@
+import { checkIpRisk } from './core/ipRisk';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -511,6 +512,8 @@ export function registerIpc(context: IpcContext): void {
     testProxy(config, password),
   );
 
+  handle<Partial<ProxyConfig> | null>('proxy:clipboard', () => parseProxyLine(clipboard.readText()));
+  handle('proxy:risk', (ip: string) => checkIpRisk(String(ip ?? '')));
   handle<ProxyCheckResult>('proxy:checkDirect', () => testDirect());
   handle<ProxyEntry[]>('proxy:list', () => listEntries().map(publicEntry));
   handle<ProxyEntry>('proxy:get', (id: string) => {

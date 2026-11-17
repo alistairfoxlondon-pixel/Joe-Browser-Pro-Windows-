@@ -610,6 +610,8 @@ export interface Bridge {
   applyProxyToSession(profileId: string, proxyId: string): Promise<boolean>;
   createProfileFromProxy(proxyId: string): Promise<Profile>;
   proxyLine(line: string): Promise<Partial<ProxyConfig> | null>;
+  proxyClipboard(): Promise<Partial<ProxyConfig> | null>;
+  checkIpRisk(ip: string): Promise<{ ip: string; score: number; proxy: string; type: string }>;
   networkReport(proxyId?: string): Promise<NetworkReport>;
 
   /* profiles: import / export */

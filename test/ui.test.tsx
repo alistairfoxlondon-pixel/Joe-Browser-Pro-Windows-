@@ -808,3 +808,76 @@ test('saving an unrelated profile edit does not send a blank proxy password', as
     await teardown();
   }
 });
+
+test('proxy host Ctrl+B fills all fields without toggling global shortcuts', async () => {
+  signIn(); reset();
+  const original = mockBridge.proxyClipboard;
+  mockBridge.proxyClipboard = async () => ({ type: 'socks5', host: 'example.test', port: 1080, user: 'alice', password: 'p:word' });
+  try {
+    await render(hosted(React.createElement(ProxiesPage, { profiles: [], refreshProfiles: async () => undefined })));
+    const button = [...container.querySelectorAll('button')].find((el) => el.textContent?.includes('Add proxy'));
+    assert.ok(button);
+    await act(async () => { button.click(); });
+    const host = container.querySelector('input[placeholder="gate.example.com"]') as HTMLInputElement;
+    assert.ok(host);
+    let bubbled = false;
+    const listener = () => { bubbled = true; };
+    win.addEventListener('keydown', listener);
+    await act(async () => { host.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
+    win.removeEventListener('keydown', listener);
+    const dialog = host.closest('.modal')!;
+    const inputs = [...dialog.querySelectorAll('input')];
+    assert.equal(host.value, 'example.test');
+    assert.ok(inputs.some(input => input.value === '1080'));
+    assert.ok(inputs.some(input => input.value === 'alice'));
+    assert.ok(inputs.some(input => input.value === 'p:word' && input.type === 'password'));
+    assert.equal(bubbled, false);
+    assert.ok(!dialog.textContent?.includes('Stored encrypted'));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.proxyClipboard = original; await teardown(); }
+});
+
+test('profile proxy host Ctrl+B fills credentials', async () => {
+  signIn(); reset();
+  const original = mockBridge.proxyClipboard;
+  mockBridge.proxyClipboard = async () => ({ type: 'http', host: 'profile-proxy.test', port: 3128, user: 'bob', password: 'secret' });
+  try {
+    const profiles = await mockBridge.listProfiles();
+    const full = (await mockBridge.getProfile(profiles[0]!.id))!;
+    const settings = await mockBridge.getSettings();
+    await render(hosted(React.createElement(ProfileEditor, { profile: full, onClose: () => undefined, onSaved: () => undefined, settings, existing: profiles, toast: { toast: () => undefined } as never })));
+    const tab = [...container.querySelectorAll('button')].find(el => el.textContent?.trim() === 'Proxy' || el.textContent?.trim() === 'Connection');
+    assert.ok(tab);
+    await act(async () => { tab.click(); });
+    const host = container.querySelector('input[placeholder="gate.example.com"]') as HTMLInputElement;
+    assert.ok(host);
+    await act(async () => { host.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
+    const inputs = [...container.querySelectorAll('input')];
+    assert.equal(host.value, 'profile-proxy.test');
+    for (const value of ['3128', 'bob', 'secret']) assert.ok(inputs.some(input => input.value === value));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.proxyClipboard = original; await teardown(); }
+});
+
+test('diagnostics only sends the exit IP for a risk lookup when requested', async () => {
+  signIn(); reset();
+  const originalReport = mockBridge.networkReport;
+  const originalRisk = mockBridge.checkIpRisk;
+  let requested = '';
+  mockBridge.networkReport = async () => ({ ok: true, ip: '8.8.8.8', country: 'United States', countryCode: 'US', city: 'X', region: '', timezone: 'UTC', isp: 'Example', resolverIp: '', resolverGeo: '', latencyMs: 20, clockSkewSeconds: null, sources: [], warnings: [], error: '' });
+  mockBridge.checkIpRisk = async (ip) => { requested = ip; return { ip, score: 45, proxy: 'yes', type: 'VPN' }; };
+  try {
+    await render(hosted(React.createElement(ProxiesPage, { profiles: [], refreshProfiles: async () => undefined })));
+    const diag = [...container.querySelectorAll('button')].find(el => el.textContent?.includes('Network diagnostics'));
+    assert.ok(diag);
+    await act(async () => { diag.click(); await Promise.resolve(); });
+    assert.equal(requested, '');
+    const risk = [...container.querySelectorAll('button')].find(el => el.textContent?.includes('Check risk'));
+    assert.ok(risk);
+    await act(async () => { risk.click(); await Promise.resolve(); });
+    assert.equal(requested, '8.8.8.8');
+    assert.ok(text().includes('45/100'));
+    assert.ok(text().includes('not proof of fraud'));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.networkReport = originalReport; mockBridge.checkIpRisk = originalRisk; await teardown(); }
+});

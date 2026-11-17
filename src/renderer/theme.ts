@@ -26,6 +26,9 @@ export function muiTheme(mode: 'dark' | 'light') {
     ...shared,
     palette: {
       mode,
+      success: { main: PRIMARY },
+      warning: { main: PRIMARY },
+      error: { main: PRIMARY },
       primary: { main: PRIMARY, light: dark ? '#6f9bef' : '#4f86ee', dark: '#2457b8', contrastText: '#ffffff' },
       background: dark
         ? { default: '#0e1014', paper: '#171a20' }

@@ -9,6 +9,7 @@ import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
+import 'flag-icons/css/flag-icons.min.css';
 import './styles.css';
 
 const container = document.getElementById('root');

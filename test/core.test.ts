@@ -737,3 +737,16 @@ test('proxy alerts only on transitions and include old and new IP addresses', as
   assert.equal(notices[1]!.detail, '192.0.2.1 → 192.0.2.2');
   assert.deepEqual(state.success('192.0.2.2', ''), []);
 });
+
+test('editing a proxy endpoint clears stale location while a name edit preserves it', async () => {
+  const vault = await import('../src/main/core/proxies');
+  const config = normalizeProxy({ type: 'http', host: 'old.test', port: 80, lastIp: '8.8.8.8', lastCountry: 'United States', lastCountryCode: 'US' });
+  const created = vault.saveEntry({ name: 'before', config, lastStatus: 1, lastIp: '8.8.8.8', lastCountry: 'United States', lastCountryCode: 'US' });
+  const renamed = vault.saveEntry({ id: created.id, name: 'after', config: vault.publicEntry(created).config });
+  assert.equal(renamed.lastCountryCode, 'US');
+  assert.equal(renamed.lastStatus, 1);
+  const changed = vault.saveEntry({ id: created.id, name: 'after', config: { ...vault.publicEntry(renamed).config, host: 'new.test' } });
+  assert.equal(changed.lastCountryCode, '');
+  assert.equal(changed.config.lastIp, '');
+  assert.equal(changed.lastStatus, 0);
+});

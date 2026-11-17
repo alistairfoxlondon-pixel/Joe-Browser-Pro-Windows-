@@ -96,7 +96,18 @@ export function saveEntry(input: Partial<StoredEntry> & { config: ProxyConfig; r
       shaped.passwordEnc = entries[index]!.passwordEnc;
       shaped.config.passwordEnc = entries[index]!.passwordEnc;
     }
-    shaped.lastStatus = 0;
+    const previous = entries[index]!;
+    const changed = previous.config.type !== shaped.config.type || previous.config.host !== shaped.config.host ||
+      previous.config.port !== shaped.config.port || previous.config.user !== shaped.config.user || input.replacePassword === true;
+    if (changed) {
+      shaped.lastStatus = 0; shaped.lastIp = ''; shaped.lastCountry = ''; shaped.lastCountryCode = '';
+      shaped.lastCity = ''; shaped.lastTimezone = ''; shaped.lastLatencyMs = 0; shaped.lastChecked = '';
+      Object.assign(shaped.config, { lastIp: '', lastCountry: '', lastCountryCode: '', lastTimezone: '', lastCity: '' });
+    } else {
+      Object.assign(shaped, { lastStatus: previous.lastStatus, lastIp: previous.lastIp, lastCountry: previous.lastCountry,
+        lastCountryCode: previous.lastCountryCode, lastCity: previous.lastCity, lastTimezone: previous.lastTimezone,
+        lastLatencyMs: previous.lastLatencyMs, lastChecked: previous.lastChecked });
+    }
     entries[index] = shaped;
   } else {
     entries.push(shaped);
