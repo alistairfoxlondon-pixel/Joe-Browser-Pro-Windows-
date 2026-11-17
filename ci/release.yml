@@ -38,12 +38,23 @@ jobs:
       - name: Read the version
         id: meta
         shell: bash
+        # Passed through the environment rather than interpolated into the script. `${{ }}` is
+        # substituted before bash sees the line, so a tag containing a quote or a backtick would
+        # become shell syntax, and an unset optional input arrives as the four characters
+        # "null" rather than as empty - both silently produce a wrong tag.
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -eu
           # One number, taken from package.json - the same one the app reports at runtime.
           version=$(node -p "require('./package.json').version")
-          tag="${{ inputs.tag }}"
-          if [ -z "$tag" ]; then tag="v$version"; fi
+          tag="${INPUT_TAG:-}"
+          # The action hands an unset input through as the literal string "null".
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then tag="v$version"; fi
+          case "$tag" in
+            v*) ;;
+            *) echo "::error::tag '$tag' must start with v"; exit 1 ;;
+          esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Building $tag ($version)"

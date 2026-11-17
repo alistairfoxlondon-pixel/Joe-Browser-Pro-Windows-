@@ -281,6 +281,17 @@ test('the staged workflow replacement is correct and drops the pinned tag', () =
     assert.ok(staged.includes(artifact), `the staged workflow does not publish ${artifact}`);
   }
 
+  // The tag is read through the environment, not interpolated into the shell. `${{ }}` is
+  // substituted before bash runs, so a tag with a quote in it would become shell syntax, and an
+  // unset optional input arrives as the literal "null".
+  assert.ok(staged.includes('INPUT_TAG:'), 'the tag is not passed through the environment');
+  assert.ok(staged.includes('"null"'), 'an unset input is not handled');
+  assert.doesNotMatch(
+    staged,
+    /^\s+tag="\$\{\{ inputs\.tag \}\}"/m,
+    'the tag is interpolated straight into the script',
+  );
+
   // It has to be valid YAML with a build job and a workflow_dispatch trigger, because the whole
   // point is that it works where the pinned one does not.
   assert.match(staged, /^on:\s*$/m);
