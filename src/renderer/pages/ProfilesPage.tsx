@@ -110,6 +110,7 @@ export function ProfilesPage({
   }, [locationInputs]);
 
   const density = settings.density;
+  const sortBy = settings.sortBy === 'group' ? 'recent' : settings.sortBy;
 
   /* ---------------------------------------------------------------- search + filter */
 
@@ -174,7 +175,7 @@ export function ProfilesPage({
 
     // The main process already sorts, but the page keeps its own order so a change of sort is
     // instant rather than a round trip.
-    const mode: SortMode = settings.sortBy;
+    const mode: SortMode = sortBy;
     const sorted = [...matching].sort((a, b) => {
       switch (mode) {
         case 'name':
@@ -195,7 +196,7 @@ export function ProfilesPage({
     });
 
     return sorted;
-  }, [profiles, filters, settings.sortBy, runningById, locations]);
+  }, [profiles, filters, sortBy, runningById, locations]);
 
   /* ---------------------------------------------------------------- actions */
 
@@ -308,7 +309,7 @@ export function ProfilesPage({
       // Ctrl+O cycles the sort, matching the original's CycleSort.
       if (mod && !event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault();
-        const index = SORT_MODES.findIndex((mode) => mode.id === settings.sortBy);
+        const index = SORT_MODES.findIndex((mode) => mode.id === sortBy);
         const next = SORT_MODES[(index + 1) % SORT_MODES.length]!;
         void saveSettings({ sortBy: next.id });
         return;
@@ -360,7 +361,7 @@ export function ProfilesPage({
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [profiles, visible, settings.sortBy, saveSettings, focusId, focusCard, columnsIn, open, edit]);
+  }, [profiles, visible, sortBy, saveSettings, focusId, focusCard, columnsIn, open, edit]);
 
   const remove = useCallback(
     async (profile: ProfileSummary) => {
@@ -588,12 +589,12 @@ export function ProfilesPage({
         <Menu
           actions={SORT_MODES.map((mode) => ({
             label: t(`sort.${mode.id}`, mode.label),
-            icon: settings.sortBy === mode.id ? 'check' : 'sort',
+            icon: sortBy === mode.id ? 'check' : 'sort',
             onClick: () => void saveSettings({ sortBy: mode.id }),
           }))}
           trigger={(openMenu) => (
             <Button variant="soft" icon="sort" onClick={openMenu} title={t('sort.label')}>
-              {t(`sort.${settings.sortBy}`, settings.sortBy)}
+              {t(`sort.${sortBy}`, sortBy)}
             </Button>
           )}
         />
