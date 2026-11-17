@@ -25,10 +25,13 @@ async function workspace(page) {
   assert.equal(await page.locator('.recovery').count(), 0);
 }
 try {
+  console.log('Installing to', destination);
   // NSIS /D must be the final argument and must not be quoted, even with spaces.
   execFileSync(path.resolve('release/JoeBrowserSetup.exe'), ['/S', '/allusers', `/D=${destination}`], { timeout: 120000 });
   await access(executablePath);
+  console.log('Launching installed application');
   let page = await launch();
+  console.log('Registering local account');
   await page.locator('.gate input[type=email]').fill('smoke@example.com');
   await page.locator('.gate input[type=password]').fill('test-password-123');
   await page.locator('.gate button[type=submit]').click();
@@ -52,6 +55,10 @@ try {
   execFileSync(uninstaller, ['/S', `_?=${destination}`], { timeout: 120000 });
   await access(path.join(data, 'session.json')); // uninstall must preserve user data
   console.log('PASS: custom-directory install, registration without verification, restart, all pages, uninstall.');
+} catch (error) {
+  const detail = String(error?.stack || error).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  console.log(`::error title=Windows installed smoke test::${detail}`);
+  throw error;
 } finally {
   if (app) await app.close();
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 1000 });
