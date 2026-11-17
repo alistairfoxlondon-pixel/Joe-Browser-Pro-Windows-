@@ -536,13 +536,16 @@ export function Stat({
   value,
   label,
   title,
+  icon,
 }: {
   value: ReactNode;
   label: string;
   title?: string;
+  icon?: IconName;
 }): ReactNode {
   return (
     <div className="stat" title={title}>
+      {icon ? <div className="stat-icon"><Icon name={icon} size={17} /></div> : null}
       <div className="stat-value">{value}</div>
       <div className="stat-label">{label}</div>
     </div>

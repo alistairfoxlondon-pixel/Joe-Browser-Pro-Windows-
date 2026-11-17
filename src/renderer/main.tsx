@@ -6,10 +6,10 @@ import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { muiTheme } from './theme';
 import { currentTheme, subscribeTheme } from './themeState';
-import '@fontsource/inter/400.css';
-import '@fontsource/inter/500.css';
-import '@fontsource/inter/600.css';
-import '@fontsource/inter/700.css';
+import '@fontsource/ibm-plex-sans/400.css';
+import '@fontsource/ibm-plex-sans/500.css';
+import '@fontsource/ibm-plex-sans/600.css';
+import '@fontsource/ibm-plex-sans/700.css';
 import 'flag-icons/css/flag-icons.min.css';
 import './styles.css';
 

@@ -81,6 +81,7 @@ export function ProfileEditor({
   const proxySelection = useRef(0);
   const passwordChanged = useRef(false);
   const [saving, setSaving] = useState(false);
+  const [rolling, setRolling] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState('');
   const [learning, setLearning] = useState(false);
@@ -98,7 +99,7 @@ export function ProfileEditor({
     }
     void (async () => {
       try {
-        const created = await bridge().draftProfile({ name: nextName(existing), group: settings.defaultGroup });
+        const created = await bridge().draftProfile({ name: nextName(existing) });
         if (live) {
           setDraft(created);
 
@@ -192,32 +193,27 @@ export function ProfileEditor({
 
   /* ---------------------------------------------------------------- actions */
 
-  const reroll = async () => {
-    if (!draft) return;
+  const rollFingerprint = async (target?: FingerprintConfig['os']) => {
+    if (!draft || rolling) return;
+    setRolling(true);
     try {
-      const rolled = await bridge().draftProfile(draft);
-      setDraft({ ...draft, fingerprint: rolled.fingerprint });
+      const rolled = await bridge().draftProfile({
+        ...draft, fingerprint: { ...draft.fingerprint, os: target ?? draft.fingerprint.os },
+      });
+      // Preserve edits to other profile sections made while the request was running.
+      setDraft((current) => current ? { ...current, fingerprint: rolled.fingerprint } : current);
       setDirty(true);
       setClash('');
-      toast.success(t('ed.fp.new'), rolled.fingerprint.timezone);
     } catch (error) {
       toast.error(t('err.generic'), messageOf(error));
-    }
+    } finally { setRolling(false); }
   };
 
-  const randomise = async () => {
-    if (!draft) return;
-    try {
-      const targets = ['Windows 11', 'Windows 10', 'macOS', 'Linux', 'Android', 'iPhone', 'iPad'] as const;
-      const os = targets[Math.floor(Math.random() * targets.length)]!;
-      const rolled = await bridge().draftProfile({ ...draft, fingerprint: { ...draft.fingerprint, os } });
-      setDraft({ ...draft, fingerprint: rolled.fingerprint });
-      setDirty(true);
-      setClash('');
-      toast.success(t('ed.fp.random'), rolled.fingerprint.os);
-    } catch (error) {
-      toast.error(t('err.generic'), messageOf(error));
-    }
+  const reroll = () => void rollFingerprint();
+  const randomise = () => {
+    const targets = ['Windows 11', 'Windows 10', 'macOS', 'Linux', 'Android', 'iPhone', 'iPad'] as const;
+    const options = targets.filter((target) => target !== draft?.fingerprint.os);
+    void rollFingerprint(options[Math.floor(Math.random() * options.length)]!);
   };
 
   const useThisPc = async () => {
@@ -297,11 +293,6 @@ export function ProfileEditor({
   return (
     <Modal
       title={isNew ? t('ed.new') : t('ed.edit')}
-      subtitle={
-        isNew
-          ? t('ed.sub.new')
-          : t('ed.sub.edit').replace('{name}', draft.name).replace('{signature}', draft.browserVersion)
-      }
       onClose={close}
       width="wide"
       flush
@@ -314,7 +305,7 @@ export function ProfileEditor({
           <Button variant="ghost" onClick={close}>
             {t('btn.cancel')}
           </Button>
-          <Button variant="primary" icon="save" onClick={save} busy={saving}>
+          <Button variant="primary" icon="save" onClick={save} busy={saving} disabled={rolling}>
             {t('btn.save')}
           </Button>
         </>
@@ -339,7 +330,7 @@ export function ProfileEditor({
         {tab === 'general' ? (
           <div className="stack">
             <div className="form-grid">
-              <Field label={t('ed.name')} hint={t('ed.name.hint')} span={2}>
+              <Field label={t('ed.name')} span={2}>
                 <input
                   className="input"
                   value={draft.name}
@@ -349,7 +340,7 @@ export function ProfileEditor({
                 />
               </Field>
 
-              <Field label={t('ed.start')} hint={t('ed.start.hint')} span={2}>
+              <Field label={t('ed.start')} span={2}>
                 <input
                   className="input mono"
                   value={draft.startUrl}
@@ -359,38 +350,7 @@ export function ProfileEditor({
                 />
               </Field>
 
-              <Field label={t('ed.group')} hint={t('ed.group.hint')}>
-                <input
-                  className="input"
-                  value={draft.group}
-                  onChange={(event) => patch({ group: event.target.value })}
-                  list="joe-groups"
-                  spellCheck={false}
-                />
-                <datalist id="joe-groups">
-                  {[...new Set(existing.map((entry) => entry.group).filter(Boolean))].map((group) => (
-                    <option key={group} value={group} />
-                  ))}
-                </datalist>
-              </Field>
-
-              <Field label={t('ed.tags')} hint={t('ed.tags.hint')}>
-                <input
-                  className="input"
-                  value={draft.tags.join(', ')}
-                  onChange={(event) =>
-                    patch({
-                      tags: event.target.value
-                        .split(',')
-                        .map((tag) => tag.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  spellCheck={false}
-                />
-              </Field>
-
-              <Field label={t('ed.browser')} hint={t('ed.browser.hint')} span={2}>
+              <Field label={t('ed.browser')} span={2}>
                 <select
                   className="select"
                   value={draft.kernelId ? `kernel:${draft.kernelId}` : draft.engine}
@@ -418,7 +378,7 @@ export function ProfileEditor({
                 </select>
               </Field>
 
-              <Field label={t('ed.status')} hint={t('ed.status.hint')}>
+              <Field label={t('ed.status')}>
                 <input
                   className="input"
                   value={draft.status}
@@ -435,7 +395,7 @@ export function ProfileEditor({
                 </datalist>
               </Field>
 
-              <Field label={t('ed.notes')} hint={t('ed.notes.hint')}>
+              <Field label={t('ed.notes')}>
                 <input
                   className="input"
                   value={draft.notes}
@@ -458,16 +418,14 @@ export function ProfileEditor({
         ) : null}
 
         {tab === 'fingerprint' ? (
-          <div className="stack">
+          <fieldset className="stack editor-fingerprint" disabled={rolling}>
             <div className="spread">
-              <span className="muted" style={{ fontSize: 12.5 }}>
-                {t('ed.fp.sub')}
-              </span>
+              <span />
               <div className="cluster">
-                <Button size="sm" icon="refresh" onClick={reroll}>
+                <Button size="sm" icon="refresh" onClick={reroll} disabled={rolling}>
                   {t('ed.fp.new')}
                 </Button>
-                <Button size="sm" variant="soft" icon="shuffle" onClick={randomise}>
+                <Button size="sm" variant="soft" icon="shuffle" onClick={randomise} disabled={rolling}>
                   {t('ed.fp.random')}
                 </Button>
                 <Button size="sm" variant="ghost" icon="cpu" onClick={useThisPc} busy={learning}>
@@ -481,11 +439,7 @@ export function ProfileEditor({
                 <b>{t('ed.fp.clash').replace('{name}', clash)}</b>
                 <div style={{ marginTop: 3 }}>{t('ed.fp.clash.body')}</div>
               </Banner>
-            ) : (
-              <Banner tone="ok" icon="check">
-                {t('ed.fp.unique').replace('{n}', String(existing.length))}
-              </Banner>
-            )}
+            ) : null}
 
             {firefoxWarning ? (
               <Banner tone="warn" icon="info">
@@ -502,7 +456,8 @@ export function ProfileEditor({
                 <select
                   className="select"
                   value={fp.os}
-                  onChange={(event) => patchFingerprint({ os: event.target.value as FingerprintConfig['os'] })}
+                  disabled={rolling}
+                  onChange={(event) => void rollFingerprint(event.target.value as FingerprintConfig['os'])}
                 >
                   {DEVICE_TARGETS.map((target) => (
                     <option key={target} value={target}>
@@ -512,7 +467,7 @@ export function ProfileEditor({
                 </select>
               </Field>
 
-              <Field label={t('ed.screen')} hint={t('ed.fp.screen.hint')}>
+              <Field label={t('ed.screen')}>
                 <div className="row-inline">
                   <input
                     className="input num"
@@ -606,6 +561,7 @@ export function ProfileEditor({
                 </select>
               </Field>
 
+              {['Android', 'iPhone', 'iPad'].includes(fp.os) ? (
               <Field label={fp.os === 'Android' ? t('ed.fp.android') : t('ed.fp.ios')}>
                 <input
                   className="input"
@@ -622,7 +578,9 @@ export function ProfileEditor({
                 />
               </Field>
 
-              <Field label={t('ed.ua')} hint={t('ed.fp.ua.hint')} span={2}>
+              ) : null}
+
+              <Field label={t('ed.ua')} span={2}>
                 <input
                   className="input mono"
                   value={fp.userAgentOverride}
@@ -638,20 +596,20 @@ export function ProfileEditor({
               <Toggle checked={fp.canvasNoise} onChange={(canvasNoise) => patchFingerprint({ canvasNoise })} label={t('ed.canvas')} />
               <Toggle checked={fp.audioNoise} onChange={(audioNoise) => patchFingerprint({ audioNoise })} label={t('ed.audio')} />
               <Toggle checked={fp.fontsNoise} onChange={(fontsNoise) => patchFingerprint({ fontsNoise })} label={t('ed.fonts')} />
-              <Toggle checked={fp.hardwareNoise} onChange={(hardwareNoise) => patchFingerprint({ hardwareNoise })} label={t('ed.fp.hardwareNoise')} detail={t('ed.fp.hardwareNoise.hint')} />
+              <Toggle checked={fp.hardwareNoise} onChange={(hardwareNoise) => patchFingerprint({ hardwareNoise })} label={t('ed.fp.hardwareNoise')} />
               <Toggle checked={fp.spoofBattery} onChange={(spoofBattery) => patchFingerprint({ spoofBattery })} label={t('ed.battery')} />
               <Toggle checked={fp.spoofMac} onChange={(spoofMac) => patchFingerprint({ spoofMac })} label={t('ed.fp.mac')} />
               <Toggle checked={fp.doNotTrack} onChange={(doNotTrack) => patchFingerprint({ doNotTrack })} label={t('ed.dnt')} />
               <Toggle checked={fp.autoUserAgent} onChange={(autoUserAgent) => patchFingerprint({ autoUserAgent })} label={t('ed.ua')} />
             </div>
-          </div>
+          </fieldset>
         ) : null}
 
         {tab === 'privacy' ? (
           <div className="stack">
             <div className="section-label">{t('ed.webrtc')}</div>
             <div className="form-grid">
-              <Field label={t('ed.webrtc')} hint="What an ICE candidate may reveal." span={2}>
+              <Field label={t('ed.webrtc')} span={2}>
                 <Segmented
                   value={fp.webRtcMode}
                   onChange={(webRtcMode) => patchFingerprint({ webRtcMode, webRtcProtect: webRtcMode !== 'off' })}
@@ -689,11 +647,6 @@ export function ProfileEditor({
             </div>
 
             <div className="section-label">{t('ed.webrtc')}</div>
-            <Banner tone="info" icon="info">
-              The clock, language and coordinates follow the connection when “{t('ed.automatch')}” is on.
-              With it off the profile keeps the values on the fingerprint tab, and a site comparing the
-              two will notice a mismatch.
-            </Banner>
           </div>
         ) : null}
 
@@ -881,7 +834,7 @@ export function ProfileEditor({
                 </select>
               </Field>
 
-              <Field label={t('ed.customext')} hint={t('ed.tools.customext.hint')} span="all">
+              <Field label={t('ed.customext')} span="all">
                 <textarea
                   className="textarea mono"
                   value={draft.tools.customExtensions}

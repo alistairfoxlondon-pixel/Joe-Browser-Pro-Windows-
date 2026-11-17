@@ -100,7 +100,6 @@ export function SettingsPage({ settings, info, saveSettings, refreshProfiles, on
                   {kernels.filter(kernel => kernel.installed).map(kernel => <option key={kernel.id} value={kernel.id}>{kernel.engine} {kernel.version}</option>)}
                 </select></Field>
                 <Field label={t('set.start')}><input className="input mono" value={settings.startPage} onChange={event => void save({ startPage: event.target.value })} spellCheck={false} /></Field>
-                <Field label={t('set.group')}><input className="input" value={settings.defaultGroup} onChange={event => void save({ defaultGroup: event.target.value })} spellCheck={false} /></Field>
               </div>
             </div>
             <h3 className="settings-subheading">{t('set.tools')}</h3>

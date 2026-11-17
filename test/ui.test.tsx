@@ -994,3 +994,73 @@ test('restoring settings does not flash dark over the early light theme', async 
     assert.deepEqual(problems, []);
   } finally { mockBridge.getSettings = originalGet; await teardown(); }
 });
+
+test('profile editor removes group and tags and applies fresh device fingerprints', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const existing = await mockBridge.listProfiles();
+  const profile = (await mockBridge.getProfile(existing[0]!.id))!;
+  const originalDraft = mockBridge.draftProfile;
+  const originalUpdate = mockBridge.updateProfile;
+  const { generateFingerprint } = await import('../src/main/core/fingerprint');
+  let counter = 1000;
+  let saved: typeof profile.fingerprint | undefined;
+  mockBridge.draftProfile = async (input) => ({ ...profile, ...input, fingerprint: generateFingerprint({ seed: ++counter, os: input.fingerprint?.os, engine: profile.engine }) });
+  mockBridge.updateProfile = async (id, patch) => { saved = patch.fingerprint; return { ...profile, ...patch, id }; };
+  try {
+    await render(hosted(React.createElement(ProfileEditor, { profile, onClose: () => undefined, onSaved: () => undefined, settings, existing, toast: { toast: () => undefined } as never })));
+    assert.ok(!text().includes('Group / folder'));
+    assert.ok(!text().includes('Tags'));
+    const tab = [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Fingerprint');
+    assert.ok(tab);
+    await act(async () => { tab.click(); });
+    const click = async (label: string) => {
+      const button = [...container.querySelectorAll('button')].find((item) => item.textContent?.trim().endsWith(label));
+      assert.ok(button, label);
+      await act(async () => { button.click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    };
+    await click('New fingerprint');
+    await click('New fingerprint');
+    assert.equal(counter, 1002);
+    const picker = [...container.querySelectorAll('select')].find((item) => [...item.options].some((option) => option.value === 'iPhone'))!;
+    await act(async () => { picker.value = 'iPhone'; picker.dispatchEvent(new win.Event('change', { bubbles: true })); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    assert.equal(picker.value, 'iPhone');
+    assert.equal(counter, 1003);
+    await click('Random identity');
+    assert.notEqual(picker.value, 'iPhone');
+    assert.equal(counter, 1004);
+    await click('Save changes');
+    assert.equal(saved?.seed, 1004);
+    assert.equal(saved?.os, picker.value);
+  } finally { mockBridge.draftProfile = originalDraft; mockBridge.updateProfile = originalUpdate; await teardown(); }
+});
+
+test('profile country label is derived from the same code as its flag', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const profile = { ...profiles[0]!, locationKey: 'route-germany', hasProxy: true };
+  const original = mockBridge.getProfileLocation;
+  mockBridge.getProfileLocation = async () => ({ key: 'route-germany', ok: true, country: 'United Kingdom', countryCode: 'DE' });
+  try {
+    await render(hosted(React.createElement(ProfilesPage, { profiles: [profile], runningById: new Map(), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+    const card = container.querySelector('[data-profile-card]')!;
+    assert.ok(card.querySelector('.fi-de.fis'));
+    assert.ok(card.textContent?.includes('Germany'));
+    assert.ok(!card.querySelector('.fi-gb'));
+  } finally { mockBridge.getProfileLocation = original; await teardown(); }
+});
+
+test('proxy country label and circular flag use the same country code', async () => {
+  signIn(); reset();
+  const original = mockBridge.listProxies;
+  const sample = (await original())[0]!;
+  mockBridge.listProxies = async () => [{ ...sample, name: 'Test route', lastCountry: 'United Kingdom', lastCountryCode: 'DE', lastCity: '' }];
+  try {
+    await render(hosted(React.createElement(ProxiesPage, { profiles: [], refreshProfiles: async () => undefined })));
+    const row = container.querySelector('.proxy-row')!;
+    assert.ok(row.querySelector('.fi-de.fis'));
+    assert.ok(row.textContent?.includes('Germany'));
+    assert.ok(!row.querySelector('.fi-gb'));
+  } finally { mockBridge.listProxies = original; await teardown(); }
+});

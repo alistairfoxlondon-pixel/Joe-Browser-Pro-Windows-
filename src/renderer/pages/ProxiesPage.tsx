@@ -6,6 +6,7 @@ import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
 import { CountryFlag } from '../components/CountryFlag';
+import { countryName } from '../../shared/countries';
 import {
   Banner,
   Button,
@@ -98,7 +99,7 @@ export function ProxiesPage({
       if (updated.lastStatus === 1) {
         toast.success(
           t('proxy.working'),
-          `${updated.lastIp || updated.config.host} · ${updated.lastCountry} · ${updated.lastLatencyMs} ms`,
+          `${updated.lastIp || updated.config.host} · ${countryName(updated.lastCountryCode, updated.lastCountry)} · ${updated.lastLatencyMs} ms`,
         );
       } else {
         toast.error(t('proxy.failed'), `${updated.config.host}:${updated.config.port}`);
@@ -217,7 +218,7 @@ export function ProxiesPage({
                     {[
                       [t('net.exit'), network.ip], [t('net.country'), network.country], [t('net.city'), network.city],
                       [t('net.tz'), network.timezone], [t('net.isp'), network.isp], ['Lookup time', `${network.latencyMs} ms`],
-                    ].map(([label, value]) => <div className="network-item" key={label}><dt>{label}</dt><dd>{label === t('net.country') && network.countryCode ? <CountryFlag code={network.countryCode} /> : null}{value || '—'}</dd></div>)}
+                    ].map(([label, value]) => <div className="network-item" key={label}><dt>{label}</dt><dd>{label === t('net.country') && network.countryCode ? <CountryFlag code={network.countryCode} /> : null}{(label === t('net.country') ? countryName(network.countryCode, value) : value) || '—'}</dd></div>)}
                   </dl>
                   <div className="risk-row">
                     <div><strong>IP risk</strong><div className="hint">Sends the exit IP to proxycheck.io from this device.</div></div>
@@ -280,7 +281,7 @@ export function ProxiesPage({
                         <span className="mono">
                           {entry.config.type === 'none' ? '—' : `${entry.config.host || '—'}:${entry.config.port || '—'}`}
                         </span>
-                        {entry.lastCountry ? ` · ${entry.lastCountry}${entry.lastCity ? `, ${entry.lastCity}` : ''}` : ''}
+                        {entry.lastCountry ? ` · ${countryName(entry.lastCountryCode, entry.lastCountry)}${entry.lastCity ? `, ${entry.lastCity}` : ''}` : ''}
                         {entry.lastLatencyMs ? ` · ${entry.lastLatencyMs} ms` : ''}
                         {!entry.lastCountry ? ' · Country unknown' : ''}
                       </div>

@@ -248,13 +248,13 @@ test('history is recorded per profile and cannot leak between them', () => {
   // Newest first.
   assert.equal(forFirst[0]!.url, 'https://example.com/two');
 
-  // A repeat of the same address in a row is one visit, not two.
+  // A deliberate repeat visit must remain visible.
   history.record(first.id, 'https://example.com/two');
-  assert.equal(history.list(first.id).length, 2);
+  assert.equal(history.list(first.id).length, 3);
 
-  // The fragment never leaves the browser, so it is not recorded either.
+  // Same-document navigation is useful browsing history as well.
   history.record(first.id, 'https://example.com/three#section');
-  assert.equal(history.list(first.id)[0]!.url, 'https://example.com/three');
+  assert.equal(history.list(first.id)[0]!.url, 'https://example.com/three#section');
 
   const freed = history.clear(first.id);
   assert.ok(freed > 0);
@@ -893,4 +893,65 @@ test('Brave catalog uses exact vendor assets, channel, Chromium version and SHA-
     await assert.rejects(verifyArchiveSha256(archive, '0'.repeat(64)), /integrity/);
     await assert.rejects(verifyArchiveSha256(archive, 'bad'), /Invalid/);
   } finally { fs.rmSync(archive, { force: true }); }
+});
+
+test('country names follow the bundled flag code across countries and reject unknown codes', async () => {
+  const { countryCode, countryName } = await import('../src/shared/countries');
+  const countries = JSON.parse(fs.readFileSync('node_modules/flag-icons/country.json', 'utf8')) as { code: string }[];
+  for (const entry of countries.filter((item) => /^[a-z]{2}$/.test(item.code))) {
+    assert.equal(countryCode(entry.code), entry.code.toUpperCase());
+    assert.ok(countryName(entry.code));
+  }
+  assert.equal(countryName('DE', 'United Kingdom'), 'Germany');
+  assert.equal(countryName('gb', 'Germany'), 'United Kingdom');
+  assert.equal(countryCode('zz'), '');
+});
+
+test('history retains previous sessions and marks redirects without duplicating them', () => {
+  const profile = store.createProfile({ name: 'History persistence' });
+  const dir = path.join(scratch, 'history');
+  fs.mkdirSync(dir, { recursive: true });
+  const old = { profileId: profile.id, profileName: profile.name, at: '2020-01-01T00:00:00.000Z', url: 'https://previous.test/', title: '', how: 'link', hop: false };
+  fs.writeFileSync(path.join(dir, `${profile.id}.jsonl`), JSON.stringify(old) + '\n');
+  try {
+    history.record(profile.id, 'https://redirect.test/');
+    history.markRedirect(profile.id, 'https://redirect.test/');
+    history.record(profile.id, 'https://final.test/#fragment');
+    history.attachTitle(profile.id, 'https://final.test/#fragment', 'Final title');
+    const rows = history.list(profile.id);
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]!.title, 'Final title');
+    assert.equal(rows[0]!.url, 'https://final.test/#fragment');
+    assert.equal(rows[1]!.hop, true);
+    assert.equal(rows[2]!.url, old.url);
+    const disk = fs.readFileSync(path.join(dir, `${profile.id}.jsonl`), 'utf8');
+    assert.match(disk, /"hop":true/);
+    assert.match(disk, /Final title/);
+  } finally { history.clear(profile.id); store.deleteProfile(profile.id, false); }
+});
+
+test('CDP event listeners are active before auto-attach can pause a target', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const { CdpClient } = await import('../src/main/core/cdp');
+  const profile = store.draftProfile({ name: 'Early target' });
+  const session = new BrowserSession(profile, async () => { throw new Error('unused'); });
+  const listeners = new Map<string, (params: Record<string, unknown>, id: string) => void>();
+  const calls: string[] = [];
+  const fake = {
+    on(method: string, handler: (params: Record<string, unknown>, id: string) => void) { listeners.set(method, handler); return () => {}; },
+    async send(method: string) {
+      calls.push(method);
+      if (method === 'Target.setAutoAttach') listeners.get('Target.attachedToTarget')?.({ sessionId: 'early', targetInfo: { type: 'page' } }, '');
+      if (method === 'Target.getTargets') return { targetInfos: [] };
+      return {};
+    },
+  };
+  const original = CdpClient.connect;
+  CdpClient.connect = async () => fake as unknown as Awaited<ReturnType<typeof CdpClient.connect>>;
+  try {
+    await (session as unknown as { attachCDP(engine: string): Promise<void> }).attachCDP('chrome');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(calls.includes('Page.addScriptToEvaluateOnNewDocument'));
+    assert.ok(calls.includes('Runtime.runIfWaitingForDebugger'));
+  } finally { CdpClient.connect = original; }
 });

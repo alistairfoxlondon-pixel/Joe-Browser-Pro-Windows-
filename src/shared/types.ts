@@ -754,7 +754,6 @@ export const SORT_MODES: { id: SortMode; label: string }[] = [
   { id: 'created', label: 'Created' },
   { id: 'running', label: 'Running first' },
   { id: 'os', label: 'Operating system' },
-  { id: 'group', label: 'Group' },
 ];
 export const HUMAN_PASTE_SPEEDS = ['relaxed', 'natural', 'fast', 'instant'] as const;
 export const WEBRTC_MODES = [
@@ -773,7 +772,9 @@ export const FONT_SETS = [
   { id: 'windows', label: 'Windows' },
   { id: 'macos', label: 'macOS' },
   { id: 'linux', label: 'Linux' },
+  { id: 'ios', label: 'iOS' },
+  { id: 'android', label: 'Android' },
   { id: 'minimal', label: 'Minimal' },
 ] as const;
-export const THE_FINGERPRINT_TEST_URL = 'https://ipfighter.com/browser-fingerprint';
+export const THE_FINGERPRINT_TEST_URL = 'https://browsercan.net';
 export const TELEGRAM_USER = 'joegoldberg2025';

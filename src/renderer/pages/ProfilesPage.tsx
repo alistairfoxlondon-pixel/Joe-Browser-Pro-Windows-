@@ -82,29 +82,31 @@ export function ProfilesPage({
   const searchRef = useRef<HTMLDivElement>(null);
 
   const [locations, setLocations] = useState<Record<string, ProfileLocation>>({});
-  const [locationTick, setLocationTick] = useState(0);
   const locationInputs = JSON.stringify(profiles.map(({ id, locationKey }) => [id, locationKey]));
   useEffect(() => {
-    const timer = window.setInterval(() => setLocationTick((tick) => tick + 1), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  useEffect(() => {
     let cancelled = false;
-    const queue = JSON.parse(locationInputs) as [string, string][];
-    const worker = async () => {
-      while (queue.length && !cancelled) {
-        const [id, key] = queue.shift()!;
-        try {
-          const result = await bridge().getProfileLocation(id);
-          if (!cancelled && result.key === key) setLocations((current) => ({ ...current, [id]: result }));
-        } catch {
-          if (!cancelled) setLocations((current) => ({ ...current, [id]: { key, ok: false, country: '', countryCode: '' } }));
+    let timer: number | undefined;
+    const refreshLocations = async () => {
+      // Complete each bounded-concurrency pass before scheduling the next. Restarting the
+      // queue every 30 seconds starved later profiles when some proxies were slow.
+      const queue = JSON.parse(locationInputs) as [string, string][];
+      const worker = async () => {
+        while (queue.length && !cancelled) {
+          const [id, key] = queue.shift()!;
+          try {
+            const result = await bridge().getProfileLocation(id);
+            if (!cancelled && result.key === key) setLocations((current) => ({ ...current, [id]: result }));
+          } catch {
+            if (!cancelled) setLocations((current) => ({ ...current, [id]: { key, ok: false, country: '', countryCode: '' } }));
+          }
         }
-      }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      if (!cancelled) timer = window.setTimeout(() => void refreshLocations(), 30_000);
     };
-    void Promise.all([worker(), worker(), worker()]);
-    return () => { cancelled = true; };
-  }, [locationInputs, locationTick]);
+    void refreshLocations();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [locationInputs]);
 
   const density = settings.density;
 
@@ -148,12 +150,8 @@ export function ProfilesPage({
       if (filters.quick === 'direct' && profile.hasProxy) return false;
       if (!needle) return true;
 
-      // One field, every surface. A user who types "berlin" should find the group, the tag, the
-      // timezone and the proxy city, not just the name.
       const haystack = [
         profile.name,
-        profile.group,
-        profile.tags.join(' '),
         profile.os,
         shortOs(profile.os),
         profile.language,
@@ -189,8 +187,6 @@ export function ProfilesPage({
         }
         case 'os':
           return shortOs(a.os).localeCompare(shortOs(b.os)) || a.name.localeCompare(b.name);
-        case 'group':
-          return (a.group || '\uffff').localeCompare(b.group || '\uffff') || a.name.localeCompare(b.name);
         case 'recent':
         default:
           return (b.lastOpenedAt || b.createdAt).localeCompare(a.lastOpenedAt || a.createdAt);
@@ -199,18 +195,6 @@ export function ProfilesPage({
 
     return sorted;
   }, [profiles, filters, settings.sortBy, runningById, locations]);
-
-  const groups = useMemo(() => {
-    if (settings.sortBy !== 'group') return [];
-    const map = new Map<string, ProfileSummary[]>();
-    for (const profile of visible) {
-      const key = profile.group || '';
-      const list = map.get(key) ?? [];
-      list.push(profile);
-      map.set(key, list);
-    }
-    return [...map.entries()];
-  }, [visible, settings.sortBy]);
 
   /* ---------------------------------------------------------------- actions */
 
@@ -565,7 +549,6 @@ export function ProfilesPage({
       { separator: true, label: '', onClick: () => undefined },
       { label: t('card.duplicate'), icon: 'copy', onClick: () => void duplicate(profile) },
       { label: t('ed.fp.new'), icon: 'refresh', onClick: () => void reroll(profile) },
-      { label: t('card.folder'), icon: 'folder', onClick: () => void run(profile.id, () => bridge().openProfileDir(profile.id)) },
       { label: t('card.cookiesout'), icon: 'upload', onClick: () => void cookies(profile, 'out') },
       { label: t('card.cookiesin'), icon: 'download', onClick: () => void cookies(profile, 'in') },
       { separator: true, label: '', onClick: () => undefined },
@@ -781,49 +764,6 @@ export function ProfilesPage({
                 </Button>
               }
             />
-          ) : groups.length > 0 ? (
-            groups.map(([group, list]) => (
-              <section key={group || 'ungrouped'}>
-                <div className="group-head">
-                  <Icon name="folder" size={13} />
-                  {group || t('card.ungrouped')}
-                  <span className="count">{list.length}</span>
-                </div>
-                {density === 'compact' ? (
-                  <div className="rows">
-                    {list.map((profile) => (
-                      <ProfileRow
-                        key={profile.id}
-                        profile={profile}
-                        location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
-                        session={runningById.get(profile.id)}
-                        selected={selected.has(profile.id)}
-                        onSelect={() => toggleSelection(profile.id)}
-                        onOpen={() => void open(profile)}
-                        onEdit={() => void edit(profile)}
-                        onMenu={() => menuFor(profile)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="grid">
-                    {list.map((profile) => (
-                      <ProfileCard
-                        key={profile.id}
-                        profile={profile}
-                        location={locations[profile.id]?.key === profile.locationKey ? locations[profile.id] : undefined}
-                        session={runningById.get(profile.id)}
-                        selected={selected.has(profile.id)}
-                        onSelect={() => toggleSelection(profile.id)}
-                        onOpen={() => void open(profile)}
-                        onEdit={() => void edit(profile)}
-                        onMenu={() => menuFor(profile)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
-            ))
           ) : density === 'compact' ? (
             <div className="rows">
               {visible.map((profile) => (

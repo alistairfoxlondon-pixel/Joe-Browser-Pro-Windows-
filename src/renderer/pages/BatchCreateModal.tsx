@@ -19,7 +19,6 @@ import { messageOf } from '../util';
 const COUNTS = [5, 10, 25, 50, 100];
 
 export function BatchCreateModal({
-  settings,
   onClose,
   onCreated,
 }: {
@@ -32,7 +31,6 @@ export function BatchCreateModal({
 
   const [prefix, setPrefix] = useState('Profile');
   const [count, setCount] = useState(10);
-  const [group, setGroup] = useState(settings.defaultGroup);
   const [proxies, setProxies] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -45,7 +43,7 @@ export function BatchCreateModal({
     }
     setBusy(true);
     try {
-      const result = await bridge().batchCreate({ prefix, count, group, proxies });
+      const result = await bridge().batchCreate({ prefix, count, group: '', proxies });
       if (result.made > 0) {
         toast.success(t('tools.batch.created').replace('{n}', String(result.made)));
       }
@@ -66,7 +64,6 @@ export function BatchCreateModal({
   return (
     <Modal
       title={t('tools.batch.title')}
-      subtitle={t('tools.batch.hint', 'Each profile gets its own identity and connection.')}
       onClose={onClose}
       footer={
         <>
@@ -87,10 +84,6 @@ export function BatchCreateModal({
         <div className="form-grid">
           <Field label={t('tools.batch.prefix')}>
             <input className="input" value={prefix} onChange={(event) => setPrefix(event.target.value)} spellCheck={false} />
-          </Field>
-
-          <Field label={t('tools.batch.group')}>
-            <input className="input" value={group} onChange={(event) => setGroup(event.target.value)} spellCheck={false} />
           </Field>
 
           <Field label={t('tools.batch.count')} span="all">

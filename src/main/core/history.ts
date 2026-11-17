@@ -33,8 +33,6 @@ const lastTitle = new Map<string, string>();
 function normaliseUrl(raw: string): string {
   try {
     const url = new URL(raw);
-    // The fragment never leaves the browser, so recording it would be a lie about what happened.
-    url.hash = '';
     return url.toString();
   } catch {
     return '';
@@ -92,12 +90,10 @@ export function record(profileId: string, rawUrl: string, how = 'link', hop = fa
 
   let list = recent.get(profileId);
   if (!list) {
-    list = [];
+    // Load the existing file before appending; otherwise a new session hides older visits.
+    list = listFromDisk(profileId, MAX_ENTRIES).reverse();
     recent.set(profileId, list);
   }
-  // Two navigations to the same address in a row are one visit, not two.
-  if (list.length > 0 && list[list.length - 1]!.url === url && list[list.length - 1]!.how === entry.how) return;
-
   list.push(entry);
   if (list.length > MAX_ENTRIES) list.splice(0, list.length - MAX_ENTRIES);
 
@@ -115,6 +111,27 @@ export function record(profileId: string, rawUrl: string, how = 'link', hop = fa
   } catch {
     // A locked or unwritable file loses this entry; the session keeps working.
   }
+}
+
+/** A redirect response identifies the preceding request as an intermediate hop. */
+export function markRedirect(profileId: string, rawUrl: string): void {
+  if (!enabled()) return;
+  const url = normaliseUrl(rawUrl);
+  if (!url) return;
+  const entries = recent.get(profileId);
+  const last = entries?.[entries.length - 1];
+  if (!last || last.url !== url || last.hop) return;
+  last.hop = true;
+  last.how = 'redirect';
+  try {
+    const file = FILE(profileId);
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    if (!lines.length) return;
+    const disk = JSON.parse(lines[lines.length - 1]!) as HistoryEntry;
+    if (disk.url !== url || disk.at !== last.at) return;
+    lines[lines.length - 1] = JSON.stringify(last);
+    fs.writeFileSync(file, `${lines.join('\n')}\n`, 'utf8');
+  } catch { /* Do not interrupt browsing on a history write failure. */ }
 }
 
 /**
@@ -171,6 +188,10 @@ export function list(profileId: string, limit = 500): HistoryEntry[] {
     return memory.slice(-limit).reverse();
   }
 
+  return listFromDisk(profileId, limit);
+}
+
+function listFromDisk(profileId: string, limit: number): HistoryEntry[] {
   try {
     const file = FILE(profileId);
     if (!fs.existsSync(file)) return [];
@@ -180,14 +201,10 @@ export function list(profileId: string, limit = 500): HistoryEntry[] {
       try {
         const entry = JSON.parse(line) as HistoryEntry;
         parsed.push({ ...entry, profileName: entry.profileName || nameOf(profileId) });
-      } catch {
-        /* a torn last line from a crash is skipped, not fatal */
-      }
+      } catch { /* Ignore an incomplete trailing record. */ }
     }
     return parsed.reverse();
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 /** Every profile's history in one list, newest first, for the History page. */

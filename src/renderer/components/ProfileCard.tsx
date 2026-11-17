@@ -3,6 +3,7 @@ import type { ProfileSummary, ProfileLocation, SessionInfo } from '../../shared/
 import { Icon } from './Icon';
 import { BrowserLogo } from './BrowserLogo';
 import { CountryFlag } from './CountryFlag';
+import { countryName } from '../../shared/countries';
 import { Button, Chip, IconButton, Menu, clock, when, type MenuAction } from './UI';
 import { useI18n } from '../i18n';
 
@@ -80,12 +81,6 @@ export function ProfileCard({
 
           </div>
           <div className="profile-meta">
-            {profile.group ? (
-              <>
-                <span className="truncate">{profile.group}</span>
-                <span className="sep">·</span>
-              </>
-            ) : null}
             <span className="truncate">
               {running
                 ? t('generic.running')
@@ -139,21 +134,6 @@ export function ProfileCard({
 
         {statusLabel ? <Chip tone={statusTone as 'accent' | 'ok' | 'warn' | 'err'}>{statusLabel}</Chip> : null}
       </div>
-
-      {profile.tags.length > 0 ? (
-        <div className="profile-tags">
-          {profile.tags.slice(0, 5).map((tag) => (
-            <span key={tag} className="chip muted" style={{ height: 19, fontSize: 11 }}>
-              #{tag}
-            </span>
-          ))}
-          {profile.tags.length > 5 ? (
-            <span className="chip muted" style={{ height: 19, fontSize: 11 }}>
-              +{profile.tags.length - 5}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="profile-foot">
         <button
@@ -259,7 +239,7 @@ export function ProfileRow({
 
 function LocationChip({ location, direct }: { location?: ProfileLocation; direct: boolean }): ReactNode {
   return <Chip tone="muted" title={`${direct ? 'Direct connection' : 'Proxy connection'} · checked with ip-api.com`}>
-    {location?.ok ? <><CountryFlag code={location.countryCode} size={16} />{location.country}</> : <><Icon name="globe" size={14} />{location ? 'Location unavailable' : 'Detecting location…'}</>}
+    {location?.ok ? <><CountryFlag code={location.countryCode} size={16} />{countryName(location.countryCode, location.country)}</> : <><Icon name="globe" size={14} />{location ? 'Location unavailable' : 'Detecting location…'}</>}
     {direct ? ' · Direct' : null}
   </Chip>;
 }

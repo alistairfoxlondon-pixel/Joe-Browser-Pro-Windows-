@@ -16,6 +16,6 @@ export function Logo({ size = 40, className }: { size?: number; className?: stri
 export function Wordmark({ height = 34, className }: { height?: number; className?: string }): ReactNode {
   return <svg viewBox="0 0 360 96" height={height} width={Math.round(3.75 * height)} className={className} role="img" aria-label="Joe Browser">
     <g transform="translate(4 4) scale(1.375)"><Mark /></g>
-    <text x="112" y="59" fontFamily="'Inter',sans-serif" fontSize="32" fontWeight={700} fill="var(--text, #eef1f6)">Joe Browser</text>
+    <text x="112" y="59" fontFamily="'IBM Plex Sans',sans-serif" fontSize="32" fontWeight={700} fill="var(--text, #eef1f6)">Joe Browser</text>
   </svg>;
 }

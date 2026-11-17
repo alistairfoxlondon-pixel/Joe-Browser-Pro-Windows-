@@ -76,6 +76,29 @@ try {
       }
     }
   }
+  // Check the packaged font and the profile editor at desktop and narrow widths.
+  await page.evaluate(() => document.fonts.ready);
+  assert.match(await page.evaluate(() => getComputedStyle(document.body).fontFamily), /IBM Plex Sans/);
+  assert.equal(await page.evaluate(() => document.fonts.check('400 14px "IBM Plex Sans"')), true);
+  await page.locator('.nav-item').first().click();
+  await page.locator('.header').getByRole('button', { name: 'New profile' }).click();
+  const editor = page.getByRole('dialog', { name: 'New profile' });
+  await editor.waitFor();
+  await editor.locator('input[value="https://browsercan.net"]').waitFor();
+  assert.equal(await editor.getByText('Group / folder', { exact: true }).count(), 0);
+  assert.equal(await editor.getByText('Tags', { exact: true }).count(), 0);
+  for (const width of [1100, 520]) {
+    await page.setViewportSize({ width, height: 760 });
+    for (const tab of ['General', 'Fingerprint', 'Privacy', 'Proxy', 'Tools']) {
+      await editor.getByRole('tab', { name: tab }).click();
+      const overflow = await editor.evaluate(el => {
+        const body = el.querySelector('.modal-body');
+        return el.scrollWidth > el.clientWidth + 1 || body.scrollWidth > body.clientWidth + 1;
+      });
+      assert.equal(overflow, false, `${tab} editor overflows at ${width}`);
+    }
+  }
+  await editor.getByRole('button', { name: 'Close', exact: true }).click();
   await page.locator('.nav-item').nth(6).click();
   for (const width of [1100, 520]) {
     await page.setViewportSize({ width, height: 760 });

@@ -310,6 +310,31 @@ export class BrowserSession extends EventEmitter {
     try {
       this.cdp = await CdpClient.connect(this.debugPort, 30000);
 
+      // Every document request in this profile is one history entry. Network.requestWillBeSent
+      // fires before the request leaves, so a navigation that is later blocked still appears.
+      this.cdp.on('Network.requestWillBeSent', (params) => {
+        const type = String(params['type'] ?? '');
+        const request = params['request'] as { url?: string } | undefined;
+        if (type === 'Document' && request?.url) {
+          const redirect = params['redirectResponse'] as { url?: string } | undefined;
+          if (redirect?.url) history.markRedirect(this.profileId, redirect.url);
+          history.record(this.profileId, request.url);
+        }
+      });
+      this.cdp.on('Page.navigatedWithinDocument', (params) => {
+        if (typeof params['url'] === 'string') history.record(this.profileId, params['url']);
+      });
+      this.cdp.on('Target.targetInfoChanged', (params) => {
+        const target = params['targetInfo'] as { type?: string; url?: string; title?: string } | undefined;
+        if (target?.type === 'page' && target.url && target.title) history.attachTitle(this.profileId, target.url, target.title);
+      });
+
+      this.cdp.on('Target.attachedToTarget', (params, _sessionId) => {
+        const sessionId = String(params['sessionId'] ?? '');
+        const targetInfo = (params['targetInfo'] as { type?: string; targetId?: string } | undefined) ?? {};
+        void this.stampTarget(sessionId, targetInfo.type ?? 'page', engine);
+      });
+
       // Pause every new target until it has been stamped.
       await this.cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => undefined);
       await this.cdp.send('Target.setAutoAttach', {
@@ -317,22 +342,6 @@ export class BrowserSession extends EventEmitter {
         waitForDebuggerOnStart: true,
         flatten: true,
         filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'worker' }],
-      });
-
-      // Every document request in this profile is one history entry. Network.requestWillBeSent
-      // fires before the request leaves, so a navigation that is later blocked still appears.
-      this.cdp.on('Network.requestWillBeSent', (params) => {
-        const type = String(params['type'] ?? '');
-        const request = params['request'] as { url?: string } | undefined;
-        if (type === 'Document' && request?.url) {
-          history.record(this.profileId, request.url);
-        }
-      });
-
-      this.cdp.on('Target.attachedToTarget', (params, _sessionId) => {
-        const sessionId = String(params['sessionId'] ?? '');
-        const targetInfo = (params['targetInfo'] as { type?: string; targetId?: string } | undefined) ?? {};
-        void this.stampTarget(sessionId, targetInfo.type ?? 'page', engine);
       });
 
       // Targets that existed before auto-attach was switched on still need the script.

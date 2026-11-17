@@ -213,24 +213,21 @@ export function ToolsPage({
 
           <div className="section-label">{t('tools.storage')}</div>
           <div className="stat-grid">
-            <Stat value={profiles.length} label={t('set.stat.profiles')} />
-            <Stat value={stats ? bytes(stats.storeBytes) : '—'} label={t('set.stat.store')} />
-            <Stat value={stats ? bytes(stats.freeBytes) : '—'} label={t('set.stat.free')} />
-            <Stat value={stats ? bytes(stats.kernelsBytes) : '—'} label={t('set.stat.kernels')} />
-            <Stat value={stats ? bytes(stats.historyBytes) : '—'} label={t('set.stat.history')} />
-            <Stat value={stats ? bytes(stats.trashBytes) : '—'} label={t('set.stat.trash')} />
+            <Stat icon="profiles" value={profiles.length} label={t('set.stat.profiles')} />
+            <Stat icon="database" value={stats ? bytes(stats.storeBytes) : '—'} label={t('set.stat.store')} />
+            <Stat icon="save" value={stats ? bytes(stats.freeBytes) : '—'} label={t('set.stat.free')} />
+            <Stat icon="browsers" value={stats ? bytes(stats.kernelsBytes) : '—'} label={t('set.stat.kernels')} />
+            <Stat icon="history" value={stats ? bytes(stats.historyBytes) : '—'} label={t('set.stat.history')} />
+            <Stat icon="trash" value={stats ? bytes(stats.trashBytes) : '—'} label={t('set.stat.trash')} />
           </div>
 
           {stats ? (
             <div className="panel" style={{ marginTop: 12 }}>
               <div className="spread" style={{ marginBottom: 8 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 570 }}>{t('set.data')}</span>
-                <span className="faint mono" style={{ fontSize: 11.5 }}>{stats.dataDir}</span>
+                <span className="faint mono storage-path" style={{ fontSize: 11.5 }}>{stats.dataDir}</span>
               </div>
               <Meter value={usedPercent} tone={usedPercent > 90 ? 'err' : usedPercent > 70 ? 'warn' : 'ok'} />
-              <div className="hint" style={{ marginTop: 6 }}>
-                {stats.storeBytes ? bytes(stats.storeBytes) : '0 B'} used · {bytes(stats.freeBytes)} free
-              </div>
 
               {stats.perProfile.length > 0 ? (
                 <div style={{ marginTop: 14 }}>

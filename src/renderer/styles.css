@@ -13,7 +13,7 @@
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  --font: 'Inter', sans-serif;
+  --font: 'IBM Plex Sans', sans-serif;
   --mono: var(--font);
 
   --r-xs: 3px;
@@ -3097,3 +3097,7 @@ p {
 
 /* Apply both palettes in one frame rather than cross-fading individual surfaces. */
 html.theme-changing *, html.theme-changing *::before, html.theme-changing *::after { transition: none !important; }
+
+.editor-fingerprint { border: 0; padding: 0; margin: 0; min-width: 0; }
+.stat-icon { color: var(--accent-hi); margin-bottom: 7px; line-height: 1; }
+.storage-path { min-width: 0; overflow-wrap: anywhere; text-align: right; }
