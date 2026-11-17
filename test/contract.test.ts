@@ -1,0 +1,247 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+
+/**
+ * Contract tests over the source tree itself.
+ *
+ * Every one of these guards a failure that TypeScript cannot catch and that a user would meet as
+ * a dead control rather than an error:
+ *
+ *  - a bridge method with no preload entry throws "is not a function" in the packaged app;
+ *  - a channel the preload invokes with no main-process handler hangs forever on an unhandled
+ *    promise, and the button that called it spins;
+ *  - a translation key used by a page but absent from the English table renders the key itself;
+ *  - a `window.prompt`/`confirm`/`alert` silently does nothing in Electron, because the packaged
+ *    renderer has no browser chrome to show one.
+ *
+ * They read the repository as text on purpose. A test that imported these modules would need
+ * Electron, and the point is to check the wiring, which only exists as source.
+ */
+
+const root = path.resolve(import.meta.dirname, '..');
+const read = (file: string): string => fs.readFileSync(path.join(root, file), 'utf8');
+
+const preload = read('src/preload/index.ts');
+const types = read('src/shared/types.ts');
+const ipc = read('src/main/ipc.ts');
+const mainIndex = read('src/main/index.ts');
+const main = ipc + '\n' + mainIndex;
+
+/** The method names declared on the Bridge interface. */
+function bridgeMethods(): string[] {
+  const start = types.indexOf('export interface Bridge {');
+  const end = types.indexOf('\n}', start);
+  const block = types.slice(start, end);
+  return [...block.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9]*)\s*\(/gm)].map((match) => match[1]!);
+}
+
+/** Every channel the preload invokes. */
+function invokedChannels(): string[] {
+  return [...new Set([...preload.matchAll(/invoke\('([a-zA-Z0-9:_-]+)'/g)].map((m) => m[1]!))];
+}
+
+/**
+ * Every channel the main process handles.
+ *
+ * Two shapes have to be matched, and both cost a false alarm before they were:
+ *
+ *  - `handle<T>(\n  'channel'` — the generic and the channel on different lines;
+ *  - `handle<{ made: number }>('channel'` — a generic containing its own braces and colons, which
+ *    a `[^>]*` body cannot span.
+ *
+ * So the generic is skipped by balanced-bracket scan rather than by regex.
+ */
+function handledChannels(): Set<string> {
+  const found = new Set<string>();
+  const marker = /handle\s*/g;
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(main)) !== null) {
+    let index = match.index + match[0].length;
+    if (main[index] === '<') {
+      // Walk to the matching '>', counting nested angle brackets.
+      let depth = 0;
+      for (; index < main.length; index++) {
+        const char = main[index];
+        if (char === '<') depth++;
+        else if (char === '>') {
+          depth--;
+          if (depth === 0) {
+            index++;
+            break;
+          }
+        }
+      }
+    }
+    // After the generic comes the opening paren, then the channel: `handle<AppInfo>('app:info'`.
+    const channel = /^\(\s*'([a-zA-Z0-9:_-]+)'/.exec(main.slice(index));
+    if (channel) found.add(channel[1]!);
+  }
+  return found;
+}
+
+test('every bridge method has a preload implementation', () => {
+  // `on` is the event subscription, declared as a method rather than an arrow property because
+  // it takes two arguments and returns an unsubscribe function. Every other member is a
+  // `name: (...) => invoke(...)` property.
+  const missing = bridgeMethods().filter((method) => {
+    if (method === 'on') return !/^\s{2}on\(/m.test(preload);
+    return !new RegExp(`\\b${method}\\s*:`, 'm').test(preload);
+  });
+  assert.deepEqual(missing, [], `bridge methods with no preload entry: ${missing.join(', ')}`);
+});
+
+test('every channel the preload invokes has a main-process handler', () => {
+  const handled = handledChannels();
+  const dangling = invokedChannels().filter((channel) => !handled.has(channel));
+  assert.deepEqual(dangling, [], `channels with no handler: ${dangling.join(', ')}`);
+});
+
+test('the mock bridge implements every bridge method', () => {
+  const mock = read('src/renderer/bridge.ts');
+  const missing = bridgeMethods().filter(
+    (method) => !new RegExp(`^\\s*(?:async\\s+)?${method}\\s*\\(`, 'm').test(mock),
+  );
+  assert.deepEqual(missing, [], `mock bridge is missing: ${missing.join(', ')}`);
+});
+
+test('every translation key a page uses exists in English', () => {
+  const i18n = read('src/shared/i18n.ts');
+  const start = i18n.indexOf('const EN: Table = {');
+  const end = i18n.indexOf('\n};', start);
+  const english = new Set(
+    [...i18n.slice(start, end).matchAll(/^\s{2}'([^']+)':/gm)].map((m) => m[1]!),
+  );
+
+  const rendererFiles = fs
+    .readdirSync(path.join(root, 'src/renderer'), { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.tsx') || name.endsWith('.ts'));
+
+  const missing: string[] = [];
+  for (const file of rendererFiles) {
+    const source = read(path.join('src/renderer', file));
+    // Only literal keys. A template key such as `sort.${id}` is resolved from a known set and
+    // is checked by the page tests instead.
+    for (const match of source.matchAll(/\bt\('([a-zA-Z][a-zA-Z0-9._-]*)'/g)) {
+      const key = match[1]!;
+      if (!english.has(key) && !missing.includes(key)) missing.push(key);
+    }
+  }
+  assert.deepEqual(missing.sort(), [], `keys used but not defined: ${missing.join(', ')}`);
+});
+
+test('no renderer code calls a browser dialog that Electron does not implement', () => {
+  const rendererFiles = fs
+    .readdirSync(path.join(root, 'src/renderer'), { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.tsx') || name.endsWith('.ts'));
+
+  const offenders: string[] = [];
+  for (const file of rendererFiles) {
+    const source = read(path.join('src/renderer', file));
+    // `window.prompt` and friends are undefined in a packaged renderer: the call throws or the
+    // dialog never appears, and a rename silently does nothing.
+    if (/\bwindow\.(prompt|confirm|alert)\s*\(/.test(source)) offenders.push(file);
+  }
+  assert.deepEqual(offenders, [], `dialogs that do not exist in Electron: ${offenders.join(', ')}`);
+});
+
+test('every language table ends with a closing brace', () => {
+  const i18n = read('src/shared/i18n.ts');
+  const tables = [...i18n.matchAll(/const ([A-Z]{2}): Table = \{/g)].map((m) => m[1]!);
+  // A regex edit once swallowed the closing brace on every table and TypeScript still compiled
+  // the file, because the tables that followed absorbed the bodies. This catches it.
+  assert.ok(tables.length >= 15, `expected 15 language tables, found ${tables.length}`);
+  for (const code of tables) {
+    const start = i18n.indexOf(`const ${code}: Table = {`);
+    const end = i18n.indexOf('\n};', start);
+    assert.ok(end > start, `table ${code} has no closing brace`);
+    const body = i18n.slice(start, end);
+    assert.ok(body.length > 50, `table ${code} looks empty`);
+  }
+});
+
+test('the entry points the packaged app loads are the ones the build produces', () => {
+  const pkg = JSON.parse(read('package.json')) as { main: string; version: string };
+
+  // `main` is what Electron starts. If it is wrong the app shows a blank window and nothing else.
+  assert.ok(fs.existsSync(path.join(root, pkg.main)), `package.json main does not exist: ${pkg.main}`);
+
+  // The preload is referenced by an absolute path inside the asar. A typo there removes the
+  // whole bridge and every button in the window goes dead.
+  assert.ok(
+    fs.existsSync(path.join(root, 'dist/preload/index.js')),
+    'dist/preload/index.js is not in the build output',
+  );
+
+  // The window loads this file in a packaged app; in dev it loads the Vite server instead.
+  assert.ok(
+    fs.existsSync(path.join(root, 'dist/renderer/index.html')),
+    'dist/renderer/index.html is not in the build output',
+  );
+
+  // The renderer HTML must reference the hashed bundle that was actually emitted, not a stale one.
+  const html = read('dist/renderer/index.html');
+  for (const match of html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)) {
+    const asset = match[1]!;
+    assert.ok(
+      fs.existsSync(path.join(root, 'dist/renderer', asset)),
+      `index.html references a file that was not emitted: ${asset}`,
+    );
+  }
+
+  // A version of 0.0.0 or an empty string becomes the installer's name and the release tag.
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/, `version is not semver: ${pkg.version}`);
+  assert.notEqual(pkg.version, '0.0.0');
+
+  // The packaging config must not name a directory that does not exist: `asarUnpack` over a
+  // missing path is accepted by electron-builder and silently unpacks nothing.
+  const builder = read('electron-builder.yml');
+  for (const match of builder.matchAll(/^\s*-\s+([A-Za-z0-9_.*-]+\/\*\*?\/\*)\s*$/gm)) {
+    const glob = match[1]!;
+    const dir = glob.split('/')[0]!;
+    assert.ok(
+      fs.existsSync(path.join(root, dir)) || dir === 'dist',
+      `electron-builder.yml references a directory that does not exist: ${dir}`,
+    );
+  }
+});
+
+test('the release workflow builds what it says it publishes', () => {
+  const workflow = read('.github/workflows/release.yml');
+
+  // The three gates must run before the artifact is built, or a broken commit can be released.
+  const typecheck = workflow.indexOf('npm run typecheck');
+  const tests = workflow.indexOf('npm test');
+  const build = workflow.indexOf('npm run build');
+  const packaging = workflow.indexOf('electron-builder');
+  for (const [name, index] of [
+    ['typecheck', typecheck],
+    ['test', tests],
+    ['build', build],
+    ['packaging', packaging],
+  ] as const) {
+    assert.ok(index > 0, `the release workflow does not run ${name}`);
+  }
+  assert.ok(typecheck < packaging, 'typecheck runs after packaging');
+  assert.ok(tests < packaging, 'tests run after packaging');
+  assert.ok(build < packaging, 'the build runs after packaging');
+
+  // A tag written into the workflow by hand freezes every future release onto one version. The
+  // previous workflow hard-coded `v2.0.0`, so a second dispatch would have overwritten the
+  // existing release instead of creating a new one.
+  assert.doesNotMatch(
+    workflow,
+    /tag_name:\s*v\d+\.\d+\.\d+/,
+    'the workflow pins a literal tag; it must read the version from package.json',
+  );
+  assert.match(workflow, /tag_name:\s*\$\{\{/, 'tag_name is not derived at run time');
+
+  // Both artifact names the README links to have to be the ones uploaded.
+  for (const artifact of ['JoeBrowserSetup.exe', 'JoeBrowser.exe']) {
+    assert.ok(workflow.includes(artifact), `the workflow does not publish ${artifact}`);
+  }
+
+  // Uploads overwrite by default only if told to; a partial release is worse than a failed run.
+  assert.match(workflow, /target_commitish:\s*\$\{\{\s*github\.sha/, 'the release is not pinned to the built commit');
+});

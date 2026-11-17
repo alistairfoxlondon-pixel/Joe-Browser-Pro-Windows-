@@ -616,7 +616,8 @@ export interface Bridge {
   runLeakCheck(id: string): Promise<LeakReport>;
   /** Read the live page of a running profile over CDP. */
   runLiveAudit(id: string): Promise<LeakReport>;
-  auditWorkspace(): Promise<AuditReport>;
+  /** Static workspace audit: fingerprints, proxies, builds and seeds against each other. */
+  runWorkspaceAudit(): Promise<AuditReport>;
   openInProfile(id: string, url: string): Promise<void>;
   screenshotProfile(id: string): Promise<string>;
 

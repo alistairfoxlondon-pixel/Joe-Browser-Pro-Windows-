@@ -62,20 +62,30 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+/**
+ * The tray icon, embedded into the bundle at build time by scripts/build-main.mjs.
+ *
+ * It used to be read from `build/icon.png` on disk. In a packaged app that path is inside the
+ * asar, `files:` did not ship it, and `new Tray(nativeImage.createEmpty())` throws - so the
+ * release built, launched, and quietly had no tray icon. The constant below cannot be missing:
+ * if the PNG is absent at build time the build fails.
+ *
+ * The source is 1024 px and a tray wants 16 to 18, so it is resized down once here.
+ */
+declare const __TRAY_ICON__: string;
+
 function trayIcon(): Electron.NativeImage {
-  const candidates = [
-    path.join(__dirname, '../../build/icon.png'),
-    path.join(process.resourcesPath ?? '', 'build/icon.png'),
-  ];
-  for (const candidate of candidates) {
-    try {
-      const image = nativeImage.createFromPath(candidate);
-      if (!image.isEmpty()) return image.resize({ width: 18, height: 18 });
-    } catch {
-      /* try the next path */
-    }
+  try {
+    const embedded = typeof __TRAY_ICON__ === 'string' ? __TRAY_ICON__ : '';
+    const image = embedded
+      ? nativeImage.createFromDataURL(embedded)
+      : nativeImage.createFromPath(path.join(__dirname, '../../build/icon.png'));
+    if (image.isEmpty()) return nativeImage.createEmpty();
+    return image.resize({ width: 18, height: 18 });
+  } catch (error) {
+    log.error('the tray icon could not be decoded', error);
+    return nativeImage.createEmpty();
   }
-  return nativeImage.createEmpty();
 }
 
 function showWindow(): void {

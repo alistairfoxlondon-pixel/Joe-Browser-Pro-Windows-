@@ -13,7 +13,13 @@
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  --font: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  /*
+   * Segoe UI Variable Text ships with Windows 11 and is what the shell itself uses, so the app
+   * reads as native rather than as a web page in a frame. Windows 10 falls back to Segoe UI.
+   * Inter is deliberately not named: it is not bundled, and naming a font that is not installed
+   * just means the first choice never resolves.
+   */
+  --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
   --mono: 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
 
   --r-xs: 5px;

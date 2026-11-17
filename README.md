@@ -96,7 +96,7 @@ asked:
 
 ```powershell
 .\scripts\release.ps1                    # build and verify
-.\scripts\release.ps1 -Publish -Tag v2.0.0   # build, verify, tag, release
+.\scripts\release.ps1 -Publish          # build, verify, tag, release
 ```
 
 ### What the checks cover
@@ -104,17 +104,26 @@ asked:
 | Check | What it proves |
 |---|---|
 | `npm run typecheck` | Both projects compile with `noUnusedLocals`, so no dead code is hiding a mistake |
-| `npm test` → core (11) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear |
-| `npm test` → ui (5) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
-| `npm run build` | The bundles produce; the main process carries no unresolved import |
+| `npm test` → core (30) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear; PBKDF2 and TOTP round-trip against the published vector; a corrupt account file is preserved instead of overwritten; the whole lock lifecycle holds from first registration to sign-out |
+| `npm test` → ui (11) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
+| `npm test` → contract (8) | Every bridge method has a preload entry and a mock, every channel the preload invokes has a handler, every translation key a page uses exists, no renderer calls a browser dialog Electron does not implement, every language table keeps its closing brace, and the release workflow runs its gates before it packages and derives its tag from `package.json` |
+| `npm run build` | The bundles produce; the main process carries no unresolved import; the tray icon is embedded rather than read from a path that packaging might not ship |
 | `electron-builder` | Both binaries exist, are a plausible size, and carry a Windows version resource |
 
 ### The release pipeline
 
-`ci/release.yml` is the GitHub Actions workflow that builds both binaries on a Windows runner and
-attaches them to a release on a tag. It lives in `ci/` rather than `.github/workflows/` because
-the GitHub App used to push this repository has no `workflows` permission — see `ci/README.md`
-for the one move that activates it.
+`.github/workflows/release.yml` builds both binaries on a Windows runner and attaches them to a
+release. It is dispatched by hand, because a release is a decision rather than a side effect of a
+push:
+
+```
+Actions -> Build EXE -> Run workflow
+```
+
+The tag comes from `package.json` unless one is given, so a new version is released by bumping the
+version and running the workflow — nothing in the file has to be edited. Typecheck, the whole test
+suite and a production build all have to pass before anything is packaged, and the run fails if
+either binary is missing rather than publishing a release with no assets.
 
 For design work without Electron:
 

@@ -588,3 +588,63 @@ test('a pasted proxy list is parsed the same way the library parses it', () => {
   assert.equal(parseProxyLine('not a proxy at all'), null);
   assert.equal(parseProxyLine(''), null);
 });
+
+test('the whole lock lifecycle holds together end to end', () => {
+  // Each unit above is tested alone; this walks the order a person actually meets them, because
+  // the bugs that matter are the ones between the steps - a PIN that cannot be used because
+  // the unlock path reads a field the set path never wrote, a two-factor flag set without the
+  // secret it needs.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joe-lifecycle-'));
+  const previous = process.env['JOE_BROWSER_DATA_DIR'];
+  process.env['JOE_BROWSER_DATA_DIR'] = dir;
+
+  // The real settings object, so the defaults the app ships with are the ones under test.
+  const settings = () => ({ ...store.DEFAULT_SETTINGS, pinEnabled: false, autoLockMinutes: 15 });
+
+  try {
+    // Fresh install: the gate, not a lock screen.
+    assert.equal(accounts.lockState(settings()).state, 'gate');
+
+    const email = `lifecycle-${Date.now()}@example.com`;
+    accounts.register(email, 'first password', 'Lifecycle');
+    accounts.signIn(email, 'first password');
+    assert.equal(accounts.lockState(settings()).state, 'open');
+
+    // A PIN turns the next launch into a lock screen, and only the right one opens it.
+    accounts.setPin(email, '4821');
+    assert.equal(accounts.lockState({ ...settings(), pinEnabled: true }).state, 'locked');
+    assert.throws(() => accounts.unlock('0000', ''), /PIN is not right/);
+    accounts.unlock('4821', '');
+    assert.equal(accounts.checkPin(email, '4821'), true);
+
+    // Two-factor: enable with a proved code, then sign-in demands one.
+    const secret = accounts.pendingTotp(email);
+    const step = Math.floor(Date.now() / 30000);
+    assert.equal(accounts.verifyTotp(secret, accounts.totpCode(secret, step)), true);
+    assert.throws(() => accounts.enableTotp(email, secret, '000000'), /did not match/);
+    accounts.enableTotp(email, secret, accounts.totpCode(secret, step));
+
+    assert.throws(() => accounts.signIn(email, 'first password'), /six-digit code/);
+    assert.equal(
+      accounts.signIn(email, 'first password', accounts.totpCode(secret, step)).email,
+      email,
+    );
+
+    // A password change takes effect and the old one stops working.
+    accounts.changePassword(email, 'first password', 'second password');
+    assert.throws(() => accounts.signIn(email, 'first password', accounts.totpCode(secret, step)), /does not match/);
+    assert.equal(
+      accounts.signIn(email, 'second password', accounts.totpCode(secret, step)).email,
+      email,
+    );
+
+    // Signing out returns to the gate, and the account survives it.
+    accounts.signOut();
+    assert.equal(accounts.lockState({ ...settings(), pinEnabled: true }).state, 'gate');
+    assert.equal(accounts.listAccounts().some((row) => row.email === email), true);
+  } finally {
+    if (previous === undefined) delete process.env['JOE_BROWSER_DATA_DIR'];
+    else process.env['JOE_BROWSER_DATA_DIR'] = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

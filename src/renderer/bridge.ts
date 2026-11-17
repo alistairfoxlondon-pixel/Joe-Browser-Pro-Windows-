@@ -599,10 +599,6 @@ export const mockBridge: Bridge = {
     await delay(120);
   },
 
-  async auditWorkspace(): Promise<AuditReport> {
-    return this.runWorkspaceAudit();
-  },
-
   async repairWorkspace(): Promise<{ changed: number; failed: number; ids: string[] }> {
     // The preview has six seeded profiles that were rolled against each other, so the honest
     // answer is usually "nothing to repair". Report the one overlap the sample data does have:

@@ -14,7 +14,7 @@
     .\scripts\release.ps1
 
 .EXAMPLE
-    .\scripts\release.ps1 -Publish -Tag v2.0.0
+    .\scripts\release.ps1 -Publish          # tag comes from package.json
 #>
 [CmdletBinding()]
 param(

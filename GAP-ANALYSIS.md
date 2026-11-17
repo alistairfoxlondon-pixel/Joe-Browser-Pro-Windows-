@@ -123,6 +123,8 @@ Three original surfaces are not reproduced, and each is a decision rather than a
 
 ## H. Build
 
-`electron-builder.yml`, `ci/release.yml`, `scripts/release.ps1` already exist and are sound.
+`electron-builder.yml`, `.github/workflows/release.yml` and `scripts/release.ps1` all work;
+the workflow has produced a published release. The stale `ci/` copies of the workflow have been
+removed — two copies of a release pipeline drift, and only one of them runs.
 `build/icon.png` exists. Missing in this branch: portable data mode (`portable.txt`),
 `--selftest` equivalent, and the low-disk guard.
