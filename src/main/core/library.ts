@@ -60,6 +60,7 @@ interface Manifest {
   name?: string;
   version?: string;
   description?: string;
+  default_locale?: string;
   icons?: Record<string, string>;
   action?: { default_icon?: Record<string, string> | string; default_title?: string };
   key?: string;
@@ -74,6 +75,19 @@ function readManifest(folder: string): Manifest | null {
   } catch {
     return null;
   }
+}
+
+/** Chrome manifests can use __MSG_key__ placeholders resolved from their default locale. */
+function manifestText(folder: string, manifest: Manifest | null, value: string | undefined): string {
+  if (!value) return '';
+  const match = /^__MSG_([a-zA-Z0-9_@]+)__$/.exec(value);
+  const locale = manifest?.default_locale;
+  if (!match || !locale || !/^[a-zA-Z0-9_-]+$/.test(locale)) return value;
+  try {
+    const messages = JSON.parse(fs.readFileSync(path.join(folder, '_locales', locale, 'messages.json'), 'utf8')) as Record<string, { message?: string }>;
+    const key = Object.keys(messages).find((entry) => entry.toLowerCase() === match[1]!.toLowerCase());
+    return (key && messages[key]?.message) || value;
+  } catch { return value; }
 }
 
 /** The largest icon a package ships, as an absolute path, or '' when it ships none. */
@@ -149,7 +163,7 @@ export function addFromFolder(sourceFolder: string): ExtensionItem {
     throw new Error('That folder is not an unpacked extension: it has no manifest.json.');
   }
   const manifest = readManifest(resolved);
-  const name = (manifest?.name ?? path.basename(resolved)).slice(0, 120);
+  const name = (manifestText(resolved, manifest, manifest?.name) || path.basename(resolved)).slice(0, 120);
   const folderName = freshFolderName(name);
   const target = path.join(IMPORTED_ROOT(), folderName);
 
@@ -160,7 +174,7 @@ export function addFromFolder(sourceFolder: string): ExtensionItem {
     id: crypto.randomUUID(),
     name,
     version: manifest?.version ?? '',
-    description: (manifest?.description ?? 'Unpacked extension').slice(0, 240),
+    description: (manifestText(target, manifest, manifest?.description) || 'Unpacked extension').slice(0, 240),
     folder: target,
     folderName,
     enabled: true,
@@ -231,12 +245,12 @@ export function addFromCrxFile(file: string, verified?: { publicKey: Buffer; sto
     manifest.key = verified.publicKey.toString('base64');
     fs.writeFileSync(path.join(target, 'manifest.json'), JSON.stringify(manifest, null, 2));
   }
-  const name = (manifest.name ?? path.basename(file)).slice(0, 120);
+  const name = (manifestText(target, manifest, manifest.name) || path.basename(file)).slice(0, 120);
   const item: LibraryRow = {
     id: crypto.randomUUID(),
     name,
     version: manifest.version ?? '',
-    description: (manifest.description ?? 'Imported extension').slice(0, 240),
+    description: (manifestText(target, manifest, manifest.description) || 'Imported extension').slice(0, 240),
     folder: target,
     folderName,
     enabled: true,

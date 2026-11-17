@@ -375,50 +375,7 @@ const mockLanguages: LanguageInfo[] = [
 ];
 
 const mockRemovedShipped = new Set<string>();
-const mockExtensions: ExtensionItem[] = [
-  {
-    id: 'joe-proxy-guard',
-    name: 'Joe Proxy Guard',
-    version: '1.0.0',
-    description: 'Re-checks the exit address while the profile is open and warns before it drifts.',
-    folder: '',
-    enabled: true,
-    source: 'builtin',
-    storeUrl: '',
-    iconPath: '',
-    storeId: '',
-    shipped: true,
-    removed: false,
-  },
-  {
-    id: 'joe-session-keeper',
-    name: 'Joe Session Keeper',
-    version: '1.0.0',
-    description: 'Keeps an idle session warm so a logged-in shop account is not signed out mid-task.',
-    folder: '',
-    enabled: true,
-    source: 'builtin',
-    storeUrl: '',
-    iconPath: '',
-    storeId: '',
-    shipped: true,
-    removed: false,
-  },
-  {
-    id: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    name: 'uBlock Origin',
-    version: '1.60.0',
-    description: 'Wide-spectrum content blocker.',
-    folder: '/extensions/ublock',
-    enabled: true,
-    source: 'url',
-    storeUrl: 'https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    iconPath: '',
-    storeId: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    shipped: false,
-    removed: false,
-  },
-];
+const mockExtensions: ExtensionItem[] = [];
 
 const mockSessions: SessionInfo[] = [];
 

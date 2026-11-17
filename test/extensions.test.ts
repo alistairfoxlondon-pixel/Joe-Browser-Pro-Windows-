@@ -114,3 +114,14 @@ test('the original included extensions have fixed IDs and safe removal', async (
   assert.equal(folders.some((folder) => folder.includes('human-paste')), true);
   assert.equal(folders.some((folder) => folder.endsWith(rows[0]!.id)), false);
 });
+
+test('extension manifest labels resolve the publisher default locale', async () => {
+  const { addFromFolder } = await import('../src/main/core/library');
+  const source = path.join(scratch, 'localized-source');
+  fs.mkdirSync(path.join(source, '_locales', 'en'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'manifest.json'), JSON.stringify({ name: '__MSG_name__', description: '__MSG_desc__', default_locale: 'en', version: '1', manifest_version: 3 }));
+  fs.writeFileSync(path.join(source, '_locales', 'en', 'messages.json'), JSON.stringify({ Name: { message: 'Publisher name' }, desc: { message: 'Publisher description' } }));
+  const item = addFromFolder(source);
+  assert.equal(item.name, 'Publisher name');
+  assert.equal(item.description, 'Publisher description');
+});
