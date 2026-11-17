@@ -39,6 +39,7 @@ export function muiTheme(mode: 'dark' | 'light') {
         : { primary: '#10151d', secondary: '#414d61' },
     },
     components: {
+      MuiCssBaseline: { styleOverrides: { html: { backgroundColor: 'var(--bg)' }, body: { backgroundColor: 'var(--bg)', color: 'var(--text)' } } },
       MuiButton: {
         defaultProps: { disableElevation: true },
         styleOverrides: {

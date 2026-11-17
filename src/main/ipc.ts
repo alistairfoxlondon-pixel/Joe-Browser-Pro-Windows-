@@ -1,6 +1,6 @@
 import { ProfileLocationService } from './core/profileLocation';
 import { checkIpRisk } from './core/ipRisk';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -894,7 +894,21 @@ export function registerIpc(context: IpcContext): void {
   /* ------------------------------------------------------------------ settings */
 
   handle<AppSettings>('settings:get', () => getSettings());
-  handle<AppSettings>('settings:save', (patch: Partial<AppSettings>) => saveSettings(patch));
+  handle<AppSettings>('settings:save', (patch: Partial<AppSettings>) => {
+    const saved = saveSettings(patch);
+    if (patch.theme) {
+      nativeTheme.themeSource = saved.theme;
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        const light = saved.theme === 'light';
+        window.setBackgroundColor(light ? '#f6f7fa' : '#0e1014');
+        if (process.platform === 'win32' || process.platform === 'linux') {
+          try { window.setTitleBarOverlay({ color: light ? '#ffffff' : '#171a20', symbolColor: light ? '#414d61' : '#b9c1ce', height: 38 }); } catch { /* Overlay not available on this window. */ }
+        }
+      }
+    }
+    return saved;
+  });
 
   /* ---------------------------------------------------------------- accounts */
 

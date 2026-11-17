@@ -40,6 +40,56 @@ try {
   await app.close(); app = null;
   page = await launch();
   await accountGate(page);
+  // After the real gate checks, use an isolated cloud stub solely to inspect the workspace UI.
+  // This does not replace the gate test above or exercise live Supabase authentication.
+  await page.addInitScript(() => {
+    globalThis.__joeCloud = {
+      currentUser: async () => ({ id: 'ui-test', email: 'ui-test@example.test' }),
+      myEntitlement: async () => ({ expiresAt: null, serverTime: new Date().toISOString(), isAdmin: false, isBlocked: false, plan: null, source: 'server' }),
+      signOut: async () => {},
+    };
+  });
+  await page.reload();
+  await page.locator('.shell .nav-item').first().waitFor();
+  for (let i = 0; i < 8; i++) {
+    await page.locator('.nav-item').nth(i).click();
+    for (let n = 0; n < 2; n++) {
+      const frames = await page.evaluate(async () => {
+        const button = document.querySelector('.theme-toggle');
+        const shell = document.querySelector('.shell');
+        const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+        button.click();
+        const result = [];
+        for (let j = 0; j < 4; j++) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          result.push({ mode: document.documentElement.dataset.theme, background: getComputedStyle(document.body).backgroundColor,
+            html: getComputedStyle(document.documentElement).backgroundColor, shell: shell.isConnected && !!document.querySelector('.shell'), next });
+        }
+        return result;
+      });
+      for (const frame of frames) {
+        const expected = frame.next === 'light' ? 'rgb(246, 247, 250)' : 'rgb(14, 16, 20)';
+        assert.equal(frame.mode, frame.next, `Theme reverted on page ${i}`);
+        assert.equal(frame.background, expected, `Incorrect body background on page ${i}`);
+        assert.equal(frame.html, expected, `Incorrect root background on page ${i}`);
+        assert.equal(frame.shell, true, `Workspace disappeared on page ${i}`);
+      }
+    }
+  }
+  await page.locator('.nav-item').nth(6).click();
+  for (const width of [1100, 520]) {
+    await page.setViewportSize({ width, height: 760 });
+    await page.locator('.lang').first().waitFor();
+    const layout = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.lang')].map(el => el.getBoundingClientRect());
+      const content = document.querySelector('.settings-content').getBoundingClientRect();
+      const overlap = items.some((a, i) => items.slice(i + 1).some(b => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1));
+      return { overlap, fits: content.left >= 0 && content.right <= window.innerWidth + 1, percentages: [...document.querySelectorAll('.lang')].some(el => /\d+%/.test(el.textContent)) };
+    });
+    assert.equal(layout.overlap, false, `Language cards overlap at ${width}`);
+    assert.equal(layout.fits, true, `Settings content overflows at ${width}`);
+    assert.equal(layout.percentages, false, 'Language coverage percentages remain visible');
+  }
   assert.deepEqual(errors, []);
   await app.close(); app = null;
   const uninstaller = path.join(destination, 'Uninstall Joe Browser.exe');
@@ -49,7 +99,7 @@ try {
   // Uninstall must preserve user data.
   await access(data);
   await access(path.join(data, 'profiles'));
-  console.log('PASS: custom-directory install, account gate, restart, and uninstall.');
+  console.log('PASS: install, account gate, theme frames, settings layout, and uninstall.');
 } catch (error) {
   const detail = String(error?.stack || error).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
   console.log(`::error title=Windows installed smoke test::${detail}`);

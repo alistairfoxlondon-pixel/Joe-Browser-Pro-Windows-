@@ -8,21 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="./logo.svg" />
     <link rel="icon" type="image/png" sizes="256x256" href="./logo-256.png" />
     <title>Joe Browser</title>
-    <script>
-      // The theme is applied before first paint: the stored choice wins, so a reopened app never
-      // flashes the wrong scheme and never paints an unstyled layout.
-      (function () {
-        try {
-          var theme = localStorage.getItem('joe-theme');
-          if (theme !== 'light' && theme !== 'dark') theme = 'dark';
-          document.documentElement.dataset.theme = theme;
-          document.documentElement.style.background = theme === 'light' ? '#f6f7fa' : '#0e1014';
-        } catch (error) {
-          document.documentElement.dataset.theme = 'dark';
-          document.documentElement.style.background = '#0e1014';
-        }
-      })();
-    </script>
+    <script src="./theme-init.js"></script>
     <style>
       html { background: #0e1014; }
       html[data-theme='light'] { background: #f6f7fa; }

@@ -914,3 +914,83 @@ test('profiles show the detected country flag and the selected browser mark', as
     assert.deepEqual(problems, []);
   } finally { mockBridge.getProfileLocation = original; await teardown(); }
 });
+
+test('settings navigation keeps essential controls and never displays language percentages', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const info = await mockBridge.getAppInfo();
+  await render(hosted(React.createElement(SettingsPage, { settings, info, saveSettings: async () => settings, refreshProfiles: async () => undefined, onSignedOut: () => undefined })));
+  assert.ok(container.querySelector('.lang-grid'));
+  assert.equal(container.querySelectorAll('.lang .cov').length, 0);
+  assert.ok([...container.querySelectorAll('.lang')].every(el => !/\d+%/.test(el.textContent ?? '')));
+  const go = async (label: string) => {
+    const item = [...container.querySelectorAll('.settings-nav-item')].find(el => el.textContent?.includes(label)) as HTMLButtonElement;
+    assert.ok(item, label);
+    await act(async () => { item.click(); });
+  };
+  await go('General');
+  assert.ok(container.querySelector('select'));
+  await go('Account & security');
+  assert.ok(text().includes('Subscription'));
+  await go('Data & storage');
+  assert.ok(text().includes('Reset'));
+  await go('Appearance');
+  assert.equal(container.querySelectorAll('.lang .country-flag').length, (await mockBridge.listLanguages()).length);
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
+test('theme changes immediately, keeps the shell mounted, and saves rapid changes in order', async () => {
+  signIn(); reset();
+  const originalGet = mockBridge.getSettings;
+  const originalSave = mockBridge.saveSettings;
+  const base = { ...(await originalGet()), theme: 'dark' as const };
+  let persisted = { ...base } as typeof base | Awaited<ReturnType<typeof originalGet>>;
+  const pending: Array<() => void> = [];
+  const calls: string[] = [];
+  mockBridge.getSettings = async () => ({ ...persisted });
+  mockBridge.saveSettings = async patch => {
+    calls.push(String(patch.theme));
+    await new Promise<void>(resolve => pending.push(resolve));
+    persisted = { ...persisted, ...patch };
+    return { ...persisted };
+  };
+  try {
+    await render(React.createElement(App));
+    const shell = container.querySelector('.shell');
+    const toggle = container.querySelector('.theme-toggle') as HTMLButtonElement;
+    assert.ok(shell && toggle);
+    await act(async () => { toggle.click(); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'light');
+    assert.equal(container.querySelector('.shell'), shell);
+    assert.deepEqual(calls, ['light']);
+    await act(async () => { toggle.click(); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'dark');
+    assert.deepEqual(calls, ['light']);
+    await act(async () => { pending.shift()!(); await Promise.resolve(); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'dark');
+    assert.deepEqual(calls, ['light', 'dark']);
+    await act(async () => { pending.shift()!(); await Promise.resolve(); await Promise.resolve(); });
+    assert.equal(persisted.theme, 'dark');
+    assert.equal(container.querySelector('.shell'), shell);
+    assert.equal(win.localStorage.getItem('joe-theme'), 'dark');
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.getSettings = originalGet; mockBridge.saveSettings = originalSave; await teardown(); }
+});
+
+test('restoring settings does not flash dark over the early light theme', async () => {
+  signIn(); reset();
+  const originalGet = mockBridge.getSettings;
+  const initial = { ...(await originalGet()), theme: 'light' as const };
+  let finish: ((settings: typeof initial) => void) | undefined;
+  mockBridge.getSettings = () => new Promise(resolve => { finish = resolve; });
+  win.document.documentElement.dataset.theme = 'light';
+  try {
+    await render(React.createElement(App));
+    assert.equal(win.document.documentElement.dataset.theme, 'light');
+    assert.ok(finish);
+    await act(async () => { finish!(initial); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'light');
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.getSettings = originalGet; await teardown(); }
+});

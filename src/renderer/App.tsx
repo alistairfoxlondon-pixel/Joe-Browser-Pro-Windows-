@@ -17,6 +17,7 @@ import { AdminPage } from './pages/AdminPage';
 import { AccountGate } from './pages/AccountGate';
 import { Logo } from './components/Brand';
 import { ThemeToggle } from './components/ThemeToggle';
+import { applyTheme, currentTheme } from './themeState';
 import { LockOverlay } from './components/LockOverlay';
 import { cloud, type CloudUser } from './cloud/client';
 import { SubscriptionProvider, useSubscription } from './cloud/subscription';
@@ -67,9 +68,14 @@ const ADMIN_NAV: NavEntry = { id: 'admin', icon: 'key', group: 'system' };
 export function App(): ReactNode {
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [page, setPage] = useState<Page>('profiles');
+  const [settingsAccountRequest, setSettingsAccountRequest] = useState(0);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const settingsRef = useRef<AppSettings | null>(null);
+  const committedSettings = useRef<AppSettings | null>(null);
+  const saveSequence = useRef(0);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState('');
@@ -104,14 +110,11 @@ export function App(): ReactNode {
           bridge().getAppInfo(),
         ]);
         if (!live) return;
+        settingsRef.current = nextSettings;
+        committedSettings.current = nextSettings;
         setSettings(nextSettings);
         setInfo(nextInfo);
-        document.documentElement.dataset['theme'] = nextSettings.theme;
-        try {
-          localStorage.setItem('joe-theme', nextSettings.theme);
-        } catch {
-          /* private mode */
-        }
+        applyTheme(nextSettings.theme);
 
         const [nextProfiles, nextSessions] = await Promise.all([
           bridge().listProfiles(),
@@ -166,29 +169,36 @@ export function App(): ReactNode {
     };
   }, [refresh]);
 
-  // The theme is a property of the document, not of any one component.
   useEffect(() => {
-    document.documentElement.dataset['theme'] = settings?.theme ?? 'dark';
     if (settings) document.documentElement.dataset['density'] = settings.density;
-  }, [settings?.theme, settings?.density]);
+  }, [settings?.density]);
 
   const saveSettings = useCallback(async (patch: Partial<AppSettings>) => {
-    // Optimistic: a checkbox that waits for a round trip feels broken on a slow disk.
-    setSettings((current) => (current ? { ...current, ...patch } : current));
+    if (!settingsRef.current) throw new Error('Settings are not ready.');
+    const revision = ++saveSequence.current;
+    const next = { ...settingsRef.current, ...patch };
+    settingsRef.current = next;
+    setSettings(next);
+    if (patch.theme) applyTheme(patch.theme);
+
+    // Preserve the user's order even when the storage bridge resolves out of order.
+    const request = saveQueue.current.then(() => bridge().saveSettings(patch));
+    saveQueue.current = request.then(() => undefined, () => undefined);
     try {
-      const saved = await bridge().saveSettings(patch);
-      setSettings(saved);
-      if (patch.theme) {
-        document.documentElement.dataset['theme'] = saved.theme;
-        try {
-          localStorage.setItem('joe-theme', saved.theme);
-        } catch {
-          /* private mode */
-        }
+      const saved = await request;
+      committedSettings.current = saved;
+      if (revision === saveSequence.current) {
+        settingsRef.current = saved;
+        setSettings(saved);
+        if (saved.theme !== currentTheme()) applyTheme(saved.theme);
       }
       return saved;
     } catch (error) {
-      setSettings((current) => (current ? { ...current } : current));
+      if (revision === saveSequence.current && committedSettings.current) {
+        settingsRef.current = committedSettings.current;
+        setSettings(committedSettings.current);
+        if (committedSettings.current.theme !== currentTheme()) applyTheme(committedSettings.current.theme);
+      }
       throw error;
     }
   }, []);
@@ -278,7 +288,7 @@ export function App(): ReactNode {
           <div className={`shell${narrow ? ' narrow' : ''}`}>
             <Rail
               page={page}
-              onNavigate={setPage}
+              onNavigate={(next) => { if (next === 'settings') setSettingsAccountRequest(0); setPage(next); }}
               running={running}
               profileCount={profiles.length}
               narrow={narrow}
@@ -296,7 +306,7 @@ export function App(): ReactNode {
             />
 
             <main className="main">
-              <TitleBar page={page} theme={settings?.theme ?? 'dark'} onTheme={(next) => void saveSettings({ theme: next })} onOpenSettings={() => setPage('settings')} />
+              <TitleBar page={page} theme={settings?.theme ?? 'dark'} onTheme={async (next) => { await saveSettings({ theme: next }); }} onOpenSettings={() => { setSettingsAccountRequest((value) => value + 1); setPage('settings'); }} />
               {failure ? (
                 <div style={{ padding: '12px 26px 0' }}>
                   <FailureBanner message={failure} onRetry={() => setStartupAttempt((value) => value + 1)} />
@@ -318,6 +328,7 @@ export function App(): ReactNode {
                 refresh={refresh}
                 onNavigate={setPage}
                 saveSettings={saveSettings}
+                accountRequest={settingsAccountRequest}
                 onSignedOut={() => {
                   setAuthUser(null);
                 }}
@@ -450,11 +461,12 @@ function TitleBar({
 }: {
   page: Page;
   theme: 'dark' | 'light';
-  onTheme: (next: 'dark' | 'light') => void;
+  onTheme: (next: 'dark' | 'light') => Promise<void>;
   onOpenSettings: () => void;
 }): ReactNode {
   const { t } = useI18n();
   const subscription = useSubscription();
+  const toast = useToast();
   const tier = subscription.tier;
   const days = subscription.entitlement?.expiresAt
     ? Math.max(0, Math.ceil((new Date(subscription.entitlement.expiresAt).getTime() - Date.now()) / 86_400_000))
@@ -483,7 +495,7 @@ function TitleBar({
               ? `Trial · ${days}d left`
               : 'Free plan'}
       </button>
-      <ThemeToggle theme={theme} onChange={onTheme} />
+      <ThemeToggle theme={theme} onChange={(next) => { void onTheme(next).catch((error: unknown) => toast.error(t('err.save'), messageOf(error))); }} />
 
     </div>
   );
@@ -517,6 +529,7 @@ function Pages({
   onNavigate,
   saveSettings,
   onSignedOut,
+  accountRequest,
 }: {
   page: Page;
   profiles: ProfileSummary[];
@@ -527,6 +540,7 @@ function Pages({
   onNavigate: (page: Page) => void;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   onSignedOut: () => void;
+  accountRequest: number;
 }): ReactNode {
   const toast = useToast();
   const lastPage = useRef(page);
@@ -554,6 +568,7 @@ function Pages({
           saveSettings={saveSettings}
           refreshProfiles={refresh}
           onSignedOut={onSignedOut}
+          accountRequest={accountRequest}
         />
       );
     case 'admin':
