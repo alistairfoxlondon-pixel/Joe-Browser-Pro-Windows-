@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AppSettings, Profile, ProfileSummary, SessionInfo, SortMode } from '../../shared/types';
+import type { AppSettings, Profile, ProfileSummary, ProfileLocation, SessionInfo, SortMode } from '../../shared/types';
 import { SORT_MODES } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
@@ -77,11 +77,40 @@ export function ProfilesPage({
   const limitReached = subscription.tier === 'free' && profiles.length >= FREE_PROFILE_LIMIT;
   const [activateOpen, setActivateOpen] = useState(false);
   const openCreate = () => (limitReached ? setActivateOpen(true) : setCreating(true));
-  const openBatch = () => (limitReached ? setActivateOpen(true) : setBatching(true));
+  const openBatch = () => (subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true));
   const [busy, setBusy] = useState<string>('');
   const searchRef = useRef<HTMLDivElement>(null);
 
+  const [locations, setLocations] = useState<Record<string, ProfileLocation>>({});
+  const locationKeyFor = (profile: ProfileSummary) => runningById.get(profile.id)?.proxyFellBack ? 'direct' : profile.locationKey;
+  const locationInputs = JSON.stringify(profiles.map((profile) => [profile.id, locationKeyFor(profile)]));
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const refreshLocations = async () => {
+      // Complete each bounded-concurrency pass before scheduling the next. Restarting the
+      // queue every 30 seconds starved later profiles when some proxies were slow.
+      const queue = JSON.parse(locationInputs) as [string, string][];
+      const worker = async () => {
+        while (queue.length && !cancelled) {
+          const [id, key] = queue.shift()!;
+          try {
+            const result = await bridge().getProfileLocation(id);
+            if (!cancelled && result.key === key) setLocations((current) => ({ ...current, [id]: result }));
+          } catch {
+            if (!cancelled) setLocations((current) => ({ ...current, [id]: { key, ok: false, country: '', countryCode: '' } }));
+          }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      if (!cancelled) timer = window.setTimeout(() => void refreshLocations(), 30_000);
+    };
+    void refreshLocations();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [locationInputs]);
+
   const density = settings.density;
+  const sortBy = settings.sortBy === 'group' ? 'recent' : settings.sortBy;
 
   /* ---------------------------------------------------------------- search + filter */
 
@@ -123,18 +152,15 @@ export function ProfilesPage({
       if (filters.quick === 'direct' && profile.hasProxy) return false;
       if (!needle) return true;
 
-      // One field, every surface. A user who types "berlin" should find the group, the tag, the
-      // timezone and the proxy city, not just the name.
       const haystack = [
         profile.name,
-        profile.group,
-        profile.tags.join(' '),
         profile.os,
         shortOs(profile.os),
         profile.language,
         profile.timezone,
         profile.proxyLabel,
         profile.proxyCountry,
+        locations[profile.id]?.key === locationKeyFor(profile) ? locations[profile.id]?.country : '',
         profile.notes,
         profile.status,
         profile.signature,
@@ -149,7 +175,7 @@ export function ProfilesPage({
 
     // The main process already sorts, but the page keeps its own order so a change of sort is
     // instant rather than a round trip.
-    const mode: SortMode = settings.sortBy;
+    const mode: SortMode = sortBy;
     const sorted = [...matching].sort((a, b) => {
       switch (mode) {
         case 'name':
@@ -163,8 +189,6 @@ export function ProfilesPage({
         }
         case 'os':
           return shortOs(a.os).localeCompare(shortOs(b.os)) || a.name.localeCompare(b.name);
-        case 'group':
-          return (a.group || '\uffff').localeCompare(b.group || '\uffff') || a.name.localeCompare(b.name);
         case 'recent':
         default:
           return (b.lastOpenedAt || b.createdAt).localeCompare(a.lastOpenedAt || a.createdAt);
@@ -172,19 +196,7 @@ export function ProfilesPage({
     });
 
     return sorted;
-  }, [profiles, filters, settings.sortBy, runningById]);
-
-  const groups = useMemo(() => {
-    if (settings.sortBy !== 'group') return [];
-    const map = new Map<string, ProfileSummary[]>();
-    for (const profile of visible) {
-      const key = profile.group || '';
-      const list = map.get(key) ?? [];
-      list.push(profile);
-      map.set(key, list);
-    }
-    return [...map.entries()];
-  }, [visible, settings.sortBy]);
+  }, [profiles, filters, sortBy, runningById, locations]);
 
   /* ---------------------------------------------------------------- actions */
 
@@ -297,7 +309,7 @@ export function ProfilesPage({
       // Ctrl+O cycles the sort, matching the original's CycleSort.
       if (mod && !event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault();
-        const index = SORT_MODES.findIndex((mode) => mode.id === settings.sortBy);
+        const index = SORT_MODES.findIndex((mode) => mode.id === sortBy);
         const next = SORT_MODES[(index + 1) % SORT_MODES.length]!;
         void saveSettings({ sortBy: next.id });
         return;
@@ -349,7 +361,7 @@ export function ProfilesPage({
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [profiles, visible, settings.sortBy, saveSettings, focusId, focusCard, columnsIn, open, edit]);
+  }, [profiles, visible, sortBy, saveSettings, focusId, focusCard, columnsIn, open, edit]);
 
   const remove = useCallback(
     async (profile: ProfileSummary) => {
@@ -384,13 +396,14 @@ export function ProfilesPage({
 
   const duplicate = useCallback(
     async (profile: ProfileSummary) => {
+      if (limitReached) { setActivateOpen(true); return; }
       await run(profile.id, async () => {
         const copy = await bridge().duplicateProfile(profile.id);
         await refresh();
         toast.success(t('btn.duplicate'), copy.name);
       });
     },
-    [run, refresh, t, toast],
+    [run, refresh, t, toast, limitReached],
   );
 
   const reroll = useCallback(
@@ -538,7 +551,6 @@ export function ProfilesPage({
       { separator: true, label: '', onClick: () => undefined },
       { label: t('card.duplicate'), icon: 'copy', onClick: () => void duplicate(profile) },
       { label: t('ed.fp.new'), icon: 'refresh', onClick: () => void reroll(profile) },
-      { label: t('card.folder'), icon: 'folder', onClick: () => void run(profile.id, () => bridge().openProfileDir(profile.id)) },
       { label: t('card.cookiesout'), icon: 'upload', onClick: () => void cookies(profile, 'out') },
       { label: t('card.cookiesin'), icon: 'download', onClick: () => void cookies(profile, 'in') },
       { separator: true, label: '', onClick: () => undefined },
@@ -577,12 +589,12 @@ export function ProfilesPage({
         <Menu
           actions={SORT_MODES.map((mode) => ({
             label: t(`sort.${mode.id}`, mode.label),
-            icon: settings.sortBy === mode.id ? 'check' : 'sort',
+            icon: sortBy === mode.id ? 'check' : 'sort',
             onClick: () => void saveSettings({ sortBy: mode.id }),
           }))}
           trigger={(openMenu) => (
             <Button variant="soft" icon="sort" onClick={openMenu} title={t('sort.label')}>
-              {t(`sort.${settings.sortBy}`, settings.sortBy)}
+              {t(`sort.${sortBy}`, sortBy)}
             </Button>
           )}
         />
@@ -639,7 +651,7 @@ export function ProfilesPage({
                     {t('btn.batch')}
                   </Button>
                   <Button variant="ghost" icon="upload" onClick={() => void run('import', async () => {
-                    const count = await bridge().importProfiles();
+                    const count = await bridge().importProfiles(subscription.tier === 'free' ? Math.max(0, FREE_PROFILE_LIMIT - profiles.length) : undefined);
                     await refresh();
                     if (count > 0) toast.success(t('btn.import'), String(count));
                   })}>
@@ -754,53 +766,13 @@ export function ProfilesPage({
                 </Button>
               }
             />
-          ) : groups.length > 0 ? (
-            groups.map(([group, list]) => (
-              <section key={group || 'ungrouped'}>
-                <div className="group-head">
-                  <Icon name="folder" size={13} />
-                  {group || t('card.ungrouped')}
-                  <span className="count">{list.length}</span>
-                </div>
-                {density === 'compact' ? (
-                  <div className="rows">
-                    {list.map((profile) => (
-                      <ProfileRow
-                        key={profile.id}
-                        profile={profile}
-                        session={runningById.get(profile.id)}
-                        selected={selected.has(profile.id)}
-                        onSelect={() => toggleSelection(profile.id)}
-                        onOpen={() => void open(profile)}
-                        onEdit={() => void edit(profile)}
-                        onMenu={() => menuFor(profile)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="grid">
-                    {list.map((profile) => (
-                      <ProfileCard
-                        key={profile.id}
-                        profile={profile}
-                        session={runningById.get(profile.id)}
-                        selected={selected.has(profile.id)}
-                        onSelect={() => toggleSelection(profile.id)}
-                        onOpen={() => void open(profile)}
-                        onEdit={() => void edit(profile)}
-                        onMenu={() => menuFor(profile)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
-            ))
           ) : density === 'compact' ? (
             <div className="rows">
               {visible.map((profile) => (
                 <ProfileRow
                   key={profile.id}
                   profile={profile}
+                  location={locations[profile.id]?.key === locationKeyFor(profile) ? locations[profile.id] : undefined}
                   session={runningById.get(profile.id)}
                   selected={selected.has(profile.id)}
                   onSelect={() => toggleSelection(profile.id)}
@@ -816,6 +788,7 @@ export function ProfilesPage({
                 <ProfileCard
                   key={profile.id}
                   profile={profile}
+                  location={locations[profile.id]?.key === locationKeyFor(profile) ? locations[profile.id] : undefined}
                   session={runningById.get(profile.id)}
                   selected={selected.has(profile.id)}
                   onSelect={() => toggleSelection(profile.id)}
@@ -853,7 +826,7 @@ export function ProfilesPage({
                 <button
                   className="btn btn-sm btn-ghost"
                   onClick={() => void run('import', async () => {
-                    const count = await bridge().importProfiles();
+                    const count = await bridge().importProfiles(subscription.tier === 'free' ? Math.max(0, FREE_PROFILE_LIMIT - profiles.length) : undefined);
                     await refresh();
                     if (count > 0) toast.success(t('btn.import'), String(count));
                   })}

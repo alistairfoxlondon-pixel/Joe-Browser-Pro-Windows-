@@ -1,3 +1,6 @@
+import { languagesWithCoverage } from '../shared/i18n';
+import { parseProxyLine } from '../shared/parseProxy';
+import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
 import type {
   AccountSummary,
   AppInfo,
@@ -169,7 +172,7 @@ const mockProfiles: Profile[] = SAMPLE.map((sample, index) => ({
   tags: sample.tags,
   notes: index === 0 ? 'Warm account, 3 weeks old.' : '',
   status: index === 4 ? 'warm' : 'idle',
-  startUrl: 'https://ipfighter.com/browser-fingerprint',
+  startUrl: 'https://browsercan.net',
   createdAt: new Date(Date.now() - (index + 1) * 86_400_000 * 3).toISOString(),
   updatedAt: new Date().toISOString(),
   lastOpenedAt: index < 3 ? new Date(Date.now() - index * 3_600_000).toISOString() : '',
@@ -257,7 +260,8 @@ function summarise(profile: Profile, running: boolean): ProfileSummary {
     proxyLabel: profile.proxy.type === 'none' ? 'Direct' : `${profile.proxy.host}:${profile.proxy.port}`,
     proxyDetail: profile.proxy.lastCountry,
     hasProxy: profile.proxy.type !== 'none',
-    proxyCountry: profile.proxy.lastCountry,
+    proxyCountry: profile.proxy.lastCountryCode,
+    locationKey: profile.proxy.type === 'none' ? 'direct' : [profile.proxy.type, profile.proxy.host, profile.proxy.port, profile.proxy.user].join(':'),
     lastOpenedAt: profile.lastOpenedAt,
     openCount: profile.openCount,
     createdAt: profile.createdAt,
@@ -279,7 +283,7 @@ const mockSettings: AppSettings = {
   language: 'en',
   defaultEngine: 'chrome',
   defaultKernelId: '',
-  startPage: 'https://ipfighter.com/browser-fingerprint',
+  startPage: 'https://browsercan.net',
   extensionsEnabled: true,
   customExtensionsEnabled: true,
   clearCacheOnExit: false,
@@ -355,68 +359,9 @@ const mockHistory: HistoryEntry[] = [
   { profileId: 'mock-2', profileName: 'Ads Manager', at: new Date(Date.now() - 9_100_000).toISOString(), url: 'https://www.facebook.com/login/?next=ads', title: '', how: 'redirect', hop: true },
 ];
 
-const mockLanguages: LanguageInfo[] = [
-  { key: 'en', flag: 'GB', english: 'English', native: 'English', coverage: 100 },
-  { key: 'de', flag: 'DE', english: 'German', native: 'Deutsch', coverage: 62 },
-  { key: 'ru', flag: 'RU', english: 'Russian', native: 'Русский', coverage: 58 },
-  { key: 'es', flag: 'ES', english: 'Spanish', native: 'Español', coverage: 60 },
-  { key: 'fr', flag: 'FR', english: 'French', native: 'Français', coverage: 57 },
-  { key: 'pt', flag: 'PT', english: 'Portuguese', native: 'Português', coverage: 55 },
-  { key: 'it', flag: 'IT', english: 'Italian', native: 'Italiano', coverage: 54 },
-  { key: 'nl', flag: 'NL', english: 'Dutch', native: 'Nederlands', coverage: 52 },
-  { key: 'pl', flag: 'PL', english: 'Polish', native: 'Polski', coverage: 51 },
-  { key: 'tr', flag: 'TR', english: 'Turkish', native: 'Türkçe', coverage: 50 },
-  { key: 'uk', flag: 'UA', english: 'Ukrainian', native: 'Українська', coverage: 49 },
-  { key: 'ar', flag: 'SA', english: 'Arabic', native: 'العربية', coverage: 46 },
-  { key: 'zh', flag: 'CN', english: 'Chinese', native: '中文', coverage: 48 },
-  { key: 'ja', flag: 'JP', english: 'Japanese', native: '日本語', coverage: 47 },
-  { key: 'ko', flag: 'KR', english: 'Korean', native: '한국어', coverage: 45 },
-];
 
-const mockExtensions: ExtensionItem[] = [
-  {
-    id: 'joe-proxy-guard',
-    name: 'Joe Proxy Guard',
-    version: '1.0.0',
-    description: 'Re-checks the exit address while the profile is open and warns before it drifts.',
-    folder: '',
-    enabled: true,
-    source: 'builtin',
-    storeUrl: '',
-    iconPath: '',
-    storeId: '',
-    shipped: true,
-    removed: false,
-  },
-  {
-    id: 'joe-session-keeper',
-    name: 'Joe Session Keeper',
-    version: '1.0.0',
-    description: 'Keeps an idle session warm so a logged-in shop account is not signed out mid-task.',
-    folder: '',
-    enabled: true,
-    source: 'builtin',
-    storeUrl: '',
-    iconPath: '',
-    storeId: '',
-    shipped: true,
-    removed: false,
-  },
-  {
-    id: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    name: 'uBlock Origin',
-    version: '1.60.0',
-    description: 'Wide-spectrum content blocker.',
-    folder: '/extensions/ublock',
-    enabled: true,
-    source: 'url',
-    storeUrl: 'https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    iconPath: '',
-    storeId: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    shipped: false,
-    removed: false,
-  },
-];
+const mockRemovedShipped = new Set<string>();
+const mockExtensions: ExtensionItem[] = [];
 
 const mockSessions: SessionInfo[] = [];
 
@@ -637,6 +582,14 @@ export const mockBridge: Bridge = {
     return mockProfiles.map((profile, index) => summarise(profile, index < 2));
   },
 
+  async getProfileLocation(id: string) {
+    const profile = mockProfiles.find((item) => item.id === id);
+    if (!profile) throw new Error('Profile not found');
+    const summary = summarise(profile, false);
+    const direct = profile.proxy.type === 'none';
+    return { key: summary.locationKey, ok: direct || !!profile.proxy.lastCountryCode, country: direct ? 'United Kingdom' : profile.proxy.lastCountry, countryCode: direct ? 'GB' : profile.proxy.lastCountryCode };
+  },
+
   async getProfile(id: string): Promise<Profile | null> {
     return mockProfiles.find((profile) => profile.id === id) ?? null;
   },
@@ -653,6 +606,11 @@ export const mockBridge: Bridge = {
             ? `Grouped with ${mockProfiles.filter((entry) => entry.group === profile.group).length - 1} other profiles.`
             : '',
     };
+  },
+
+  async draftProfile(input: Partial<Profile>): Promise<Profile> {
+    const base = mockProfiles[0]!;
+    return { ...base, ...input, id: `draft-${Date.now()}`, name: input.name ?? 'New profile' } as Profile;
   },
 
   async createProfile(input: Partial<Profile>): Promise<Profile> {
@@ -854,6 +812,12 @@ export const mockBridge: Bridge = {
     return mockProxies.map((entry) => ({ ...entry }));
   },
 
+  async getSavedProxy(id: string): Promise<ProxyEntry> {
+    const entry = mockProxies.find((row) => row.id === id);
+    if (!entry) throw new Error('That proxy is no longer in the library.');
+    return { ...entry };
+  },
+
   async saveProxy(entry): Promise<ProxyEntry> {
     const existing = mockProxies.find((row) => row.id === entry.id);
     if (existing) {
@@ -925,11 +889,9 @@ export const mockBridge: Bridge = {
     return mockBridge.createProfile({ name: entry.name, proxy: entry.config } as Partial<Profile>);
   },
 
-  async proxyLine(line: string) {
-    const parts = line.trim().split(':');
-    if (parts.length < 2) return null;
-    return { type: 'http' as const, host: parts[0]!, port: Number(parts[1]) || 8080 };
-  },
+  async proxyLine(line: string) { return parseProxyLine(line); },
+  async proxyClipboard() { return parseProxyLine(await navigator.clipboard.readText()); },
+  async checkIpRisk() { throw new Error('IP risk lookup is available in the desktop app.'); },
 
   async networkReport(): Promise<NetworkReport> {
     await delay(300);
@@ -960,20 +922,11 @@ export const mockBridge: Bridge = {
     return {
       masterEnabled: true,
       customExtensionsEnabled: true,
-      firstParty: [
-        { id: 'joe-tools', name: 'Joe Tools', description: 'Right-click menu, selection unlock and human-paced paste.', enabled: true },
-        { id: 'joe-webrtc', name: 'Joe WebRTC guard', description: 'Keeps the exit address from leaking through ICE candidates.', enabled: true },
-        { id: 'joe-cleaner', name: 'Joe Session cleaner', description: 'Erases a profile\'s storage when it closes.', enabled: false },
-      ],
+      firstParty: [],
       library: mockExtensions.map((item) => ({ ...item })),
-      shipped: [
-        { id: 'joe-proxy-guard', name: 'Joe Proxy Guard', description: 'Warns before the exit address drifts.', present: true, removed: false },
-        { id: 'joe-session-keeper', name: 'Joe Session Keeper', description: 'Keeps an idle session warm.', present: true, removed: false },
-      ],
-      recommended: [
-        { name: 'uBlock Origin', description: 'Wide-spectrum content blocker.', url: 'https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm', icon: '' },
-        { name: 'Cookie Editor', description: 'Read and edit the cookies a profile holds.', url: 'https://chromewebstore.google.com/detail/ophjlpahpchlmihnnnihgmmeilfjmjjc', icon: '' },
-      ],
+      shipped: INCLUDED_EXTENSIONS.map((item) => ({ ...item, description: '', present: !mockRemovedShipped.has(item.id), removed: mockRemovedShipped.has(item.id) })),
+      recommended: RECOMMENDED_EXTENSIONS,
+
     };
   },
 
@@ -981,7 +934,7 @@ export const mockBridge: Bridge = {
     await delay(400);
     const item: ExtensionItem = {
       id: `ext-${mockExtensions.length + 1}`,
-      name: 'Imported extension',
+      name: RECOMMENDED_EXTENSIONS.find((entry) => entry.url === url)?.name ?? 'Imported extension',
       version: '1.0.0',
       description: url,
       folder: `/extensions/ext-${mockExtensions.length + 1}`,
@@ -989,7 +942,8 @@ export const mockBridge: Bridge = {
       source: 'url',
       storeUrl: url,
       iconPath: '',
-      storeId: '',
+      iconDataUrl: RECOMMENDED_EXTENSIONS.find((entry) => entry.url === url)?.icon,
+      storeId: url.match(/[a-p]{32}/)?.[0] ?? '',
       shipped: false,
       removed: false,
     };
@@ -1017,11 +971,13 @@ export const mockBridge: Bridge = {
     if (index >= 0) mockExtensions.splice(index, 1);
   },
 
-  async removeShippedExtension(): Promise<void> {
+  async removeShippedExtension(id: string): Promise<void> {
+    mockRemovedShipped.add(id);
     await delay(120);
   },
 
-  async restoreShippedExtension(): Promise<void> {
+  async restoreShippedExtension(id: string): Promise<void> {
+    mockRemovedShipped.delete(id);
     await delay(120);
   },
 
@@ -1255,7 +1211,7 @@ export const mockBridge: Bridge = {
   },
 
   async listLanguages(): Promise<LanguageInfo[]> {
-    return mockLanguages.map((language) => ({ ...language }));
+    return languagesWithCoverage();
   },
 
   /* ---------------------------------------------------------------- window */

@@ -27,9 +27,6 @@ const { parseProxyLine, normalizeProxy, proxyEnabled, proxyLabel } = await impor
 const { buildFingerprintScript } = await import('../src/main/core/inject');
 const store = await import('../src/main/core/store');
 const { startRelay } = await import('../src/main/core/relay');
-const { ensureFirstPartyExtensions, extensionArgs, extensionDirectories } = await import(
-  '../src/main/core/extensions'
-);
 const history = await import('../src/main/core/history');
 
 test('the same seed always rebuilds the same machine', () => {
@@ -230,51 +227,6 @@ test('a proxy password is never stored in the clear', () => {
   assert.equal(store.proxyPasswordOf(created), 'hunter2');
 });
 
-test('the built-in extensions are written to disk with valid manifests', () => {
-  const installed = ensureFirstPartyExtensions();
-  assert.equal(installed.length, 3, 'expected three first-party extensions');
-
-  for (const extension of installed) {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(extension.dir, 'manifest.json'), 'utf8'),
-    ) as Record<string, unknown>;
-    assert.equal(manifest['manifest_version'], 3, `${extension.id} is not MV3`);
-    assert.ok(fs.existsSync(path.join(extension.dir, 'content.js')), `${extension.id} has no script`);
-    assert.ok(
-      (manifest['content_scripts'] as unknown[]).length > 0,
-      `${extension.id} declares no content script`,
-    );
-  }
-
-  // Re-running must not duplicate or corrupt anything.
-  const again = ensureFirstPartyExtensions();
-  assert.deepEqual(again.map((e) => e.id), installed.map((e) => e.id));
-});
-
-test('the extension switches only carry folders that really are extensions', () => {
-  const base = store.createProfile({ name: 'Extension host' });
-  const good = path.join(scratch, 'extensions', 'joe-right-click');
-  const missing = path.join(scratch, 'extensions', 'does-not-exist');
-
-  const withBadPath = store.updateProfile(base.id, {
-    tools: { ...base.tools, customExtensions: `${good}\n${missing}\n` },
-  });
-
-  const directories = extensionDirectories(withBadPath, true);
-  assert.ok(directories.includes(good), 'a valid custom folder was dropped');
-  assert.ok(!directories.includes(missing), 'a folder with no manifest was passed to the browser');
-  assert.ok(directories.length >= 4, 'the three first-party extensions should also be present');
-
-  const args = extensionArgs(directories);
-  assert.equal(args.length, 2);
-  assert.ok(args[0]!.startsWith('--load-extension='));
-  assert.ok(args[1]!.startsWith('--disable-extensions-except='));
-
-  // The master switch turns everything off, including the built-in three.
-  assert.deepEqual(extensionDirectories(withBadPath, false), []);
-  assert.deepEqual(extensionArgs([]), []);
-});
-
 test('history is recorded per profile and cannot leak between them', () => {
   const first = store.createProfile({ name: 'History A' });
   const second = store.createProfile({ name: 'History B' });
@@ -296,13 +248,13 @@ test('history is recorded per profile and cannot leak between them', () => {
   // Newest first.
   assert.equal(forFirst[0]!.url, 'https://example.com/two');
 
-  // A repeat of the same address in a row is one visit, not two.
+  // A deliberate repeat visit must remain visible.
   history.record(first.id, 'https://example.com/two');
-  assert.equal(history.list(first.id).length, 2);
+  assert.equal(history.list(first.id).length, 3);
 
-  // The fragment never leaves the browser, so it is not recorded either.
+  // Same-document navigation is useful browsing history as well.
   history.record(first.id, 'https://example.com/three#section');
-  assert.equal(history.list(first.id)[0]!.url, 'https://example.com/three');
+  assert.equal(history.list(first.id)[0]!.url, 'https://example.com/three#section');
 
   const freed = history.clear(first.id);
   assert.ok(freed > 0);
@@ -677,4 +629,344 @@ test('a workspace default build is honoured, and ignored when it is not installe
   } finally {
     store.saveSettings({ defaultKernelId: before.defaultKernelId });
   }
+});
+
+test('proxy parser rejects malformed ports and credentials without throwing', () => {
+  assert.equal(parseProxyLine('host:123junk'), null);
+  assert.equal(parseProxyLine('http://%zz:pass@host:8080'), null);
+  assert.equal(parseProxyLine('host:8080:user'), null);
+  assert.deepEqual(parseProxyLine('socks5://user:pass@host:1080'), {
+    type: 'socks5', host: 'host', port: 1080, user: 'user', password: 'pass',
+  });
+});
+
+test('saved proxy credentials are preserved unless explicitly replaced or cleared', async () => {
+  const vault = await import('../src/main/core/proxies');
+  const config = { ...normalizeProxy({ type: 'http', host: 'proxy.test', port: 8080, user: 'alice' }), password: 'secret' };
+  const created = vault.saveEntry({ name: 'example', config });
+  assert.equal(vault.passwordOf(created), 'secret');
+  const publicRow = vault.publicEntry(created);
+  assert.equal('passwordEnc' in publicRow, false);
+  const preserved = vault.saveEntry({ ...publicRow, config: publicRow.config });
+  assert.equal(vault.passwordOf(preserved), 'secret');
+  const cleared = vault.saveEntry({ ...publicRow, replacePassword: true, config: { ...publicRow.config, user: '', password: '' } });
+  assert.equal(vault.passwordOf(cleared), '');
+});
+
+test('profile drafts do not persist and can be saved with their chosen fingerprint', () => {
+  const before = store.countProfiles();
+  const draft = store.draftProfile({ name: 'Unsaved draft' });
+  assert.equal(store.countProfiles(), before);
+  assert.equal(store.findProfile(draft.id), null);
+  const saved = store.createProfile({ ...draft, preserveFingerprint: true });
+  assert.equal(store.countProfiles(), before + 1);
+  assert.deepEqual(saved.fingerprint, draft.fingerprint);
+});
+
+test('recycle bin restoration preserves profile ID, browser data and credentials', async () => {
+  const trash = await import('../src/main/core/trash');
+  const { Paths } = await import('../src/main/core/paths');
+  const saved = store.createProfile({ name: 'Restore identity', proxy: normalizeProxy({ type: 'http', host: 'example.test', port: 8080, user: 'user', password: 'password' }) });
+  const dir = Paths.profileData(saved.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'cookies.test'), 'cookie data');
+  store.deleteProfile(saved.id, true);
+  const entry = trash.listTrash().find((row) => row.id === saved.id)!;
+  assert.ok(entry);
+  const restored = trash.restore(entry.file, (profile) => { store.restoreProfile(profile); });
+  assert.equal(restored, saved.id);
+  const record = store.findProfile(saved.id)!;
+  assert.ok(record);
+  assert.equal(store.proxyPasswordOf(record), 'password');
+  assert.equal(fs.readFileSync(path.join(dir, 'cookies.test'), 'utf8'), 'cookie data');
+  assert.equal(trash.listTrash().some((row) => row.id === saved.id), false);
+});
+
+test('recycle bin refuses to overwrite existing profile data and keeps the backup', async () => {
+  const trash = await import('../src/main/core/trash');
+  const { Paths } = await import('../src/main/core/paths');
+  const saved = store.createProfile({ name: 'Restore conflict' });
+  const dir = Paths.profileData(saved.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'original'), 'parked');
+  store.deleteProfile(saved.id, true);
+  const entry = trash.listTrash().find((row) => row.id === saved.id)!;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'current'), 'safe');
+  assert.throws(() => trash.restore(entry.file, (profile) => { store.restoreProfile(profile); }), /already exists/);
+  assert.equal(fs.readFileSync(path.join(dir, 'current'), 'utf8'), 'safe');
+  assert.ok(trash.listTrash().some((row) => row.id === saved.id));
+});
+
+test('a failed restore rolls browser data back and retains the backup', async () => {
+  const trash = await import('../src/main/core/trash');
+  const { Paths } = await import('../src/main/core/paths');
+  const saved = store.createProfile({ name: 'Restore rollback' });
+  const dir = Paths.profileData(saved.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session'), 'retained');
+  store.deleteProfile(saved.id, true);
+  const entry = trash.listTrash().find((row) => row.id === saved.id)!;
+  assert.throws(() => trash.restore(entry.file, () => { throw new Error('write failed'); }), /write failed/);
+  assert.equal(fs.existsSync(dir), false);
+  assert.ok(trash.listTrash().some((row) => row.id === saved.id));
+  trash.restore(entry.file, (profile) => { store.restoreProfile(profile); });
+  assert.equal(fs.readFileSync(path.join(dir, 'session'), 'utf8'), 'retained');
+});
+
+test('browser build IDs cannot escape the managed kernel directory', async () => {
+  const { removeKernel, resolveKernelExe, downloadKernel } = await import('../src/main/core/catalog');
+  for (const id of ['../other', '..', '/absolute', 'x/../../other', 'x\\..\\other']) {
+    await assert.rejects(removeKernel(id), /Invalid browser build ID/);
+    assert.throws(() => resolveKernelExe(id), /Invalid browser build ID/);
+    await assert.rejects(downloadKernel({ id } as never, () => {}), /Invalid browser build ID/);
+  }
+  assert.equal(resolveKernelExe('chrome-123.0-stable'), null);
+});
+
+test('proxy alerts only on transitions and include old and new IP addresses', async () => {
+  const { ProxyWatchState } = await import('../src/main/core/proxyWatch');
+  const state = new ProxyWatchState('Work');
+  assert.deepEqual(state.success('192.0.2.1', ''), []);
+  assert.equal(state.failure('timeout'), null);
+  assert.match(state.failure('timeout')!.message, /stopped answering/);
+  assert.equal(state.failure('timeout'), null);
+  const notices = state.success('192.0.2.2', 'London');
+  assert.equal(notices.length, 2);
+  assert.match(notices[0]!.message, /answering again/);
+  assert.equal(notices[1]!.detail, '192.0.2.1 → 192.0.2.2');
+  assert.deepEqual(state.success('192.0.2.2', ''), []);
+});
+
+test('editing a proxy endpoint clears stale location while a name edit preserves it', async () => {
+  const vault = await import('../src/main/core/proxies');
+  const config = normalizeProxy({ type: 'http', host: 'old.test', port: 80, lastIp: '8.8.8.8', lastCountry: 'United States', lastCountryCode: 'US' });
+  const created = vault.saveEntry({ name: 'before', config, lastStatus: 1, lastIp: '8.8.8.8', lastCountry: 'United States', lastCountryCode: 'US' });
+  const renamed = vault.saveEntry({ id: created.id, name: 'after', config: vault.publicEntry(created).config });
+  assert.equal(renamed.lastCountryCode, 'US');
+  assert.equal(renamed.lastStatus, 1);
+  const changed = vault.saveEntry({ id: created.id, name: 'after', config: { ...vault.publicEntry(renamed).config, host: 'new.test' } });
+  assert.equal(changed.lastCountryCode, '');
+  assert.equal(changed.config.lastIp, '');
+  assert.equal(changed.lastStatus, 0);
+});
+
+test('profile country lookup uses the configured connection and never falls back to direct', async () => {
+  const { ProfileLocationService } = await import('../src/main/core/profileLocation');
+  let directCount = 0, proxyCount = 0, now = 0;
+  const answer = { ok: true, ip: '1.2.3.4', country: 'United Kingdom', countryCode: 'GB', city: '', timezone: '', latencyMs: 1, error: '' };
+  const service = new ProfileLocationService(async () => { directCount++; return answer; }, async () => { proxyCount++; return { ...answer, country: 'Germany', countryCode: 'DE' }; }, () => now);
+  const direct = store.draftProfile({ name: 'direct' });
+  const proxy = { ...direct, id: 'proxy', proxy: normalizeProxy({ type: 'http', host: 'test.invalid', port: 8080 }) };
+  const results = await Promise.all([service.locate(direct), service.locate(direct), service.locate(proxy)]);
+  assert.equal(results[0]!.country, 'United Kingdom');
+  assert.equal(results[2]!.countryCode, 'DE');
+  assert.equal(directCount, 1);
+  assert.equal(proxyCount, 1);
+  const fallback = await service.locate(proxy, true);
+  assert.equal(fallback.key, 'direct');
+  assert.equal(fallback.countryCode, 'GB');
+  assert.equal(directCount, 1);
+  await service.locate(proxy);
+  assert.equal(proxyCount, 1);
+  now = 300_001;
+  await service.locate(proxy);
+  assert.equal(proxyCount, 2);
+  const changed = { ...proxy, proxy: { ...proxy.proxy, host: 'other.invalid' } };
+  assert.notEqual(store.profileLocationKey(proxy), store.profileLocationKey(changed));
+  const failing = new ProfileLocationService(async () => { throw new Error('must not use direct'); }, async () => ({ ...answer, ok: false, country: '', countryCode: '' }));
+  assert.equal((await failing.locate(changed)).ok, false);
+  assert.equal((await failing.locate({ ...changed, proxy: { ...changed.proxy, host: '', port: 0 } })).ok, false);
+});
+
+test('IP lookup response has a timeout after the socket connects', async () => {
+  const net = await import('node:net');
+  const { httpGetOver } = await import('../src/main/core/proxy');
+  const server = net.createServer(socket => { socket.on('data', () => undefined); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as import('node:net').AddressInfo).port;
+  const socket = net.connect(port, '127.0.0.1');
+  await new Promise<void>((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject); });
+  try { await assert.rejects(httpGetOver(socket, 'example.test', '/', 50), /timed out/); }
+  finally { socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('managed build assignment and duplication never cross browser engines', async () => {
+  const { Paths } = await import('../src/main/core/paths');
+  const { listKernels } = await import('../src/main/core/catalog');
+  const previous = store.getSettings();
+  const ids = ['chrome-1-stable', 'chrome-2-stable', 'firefox-3-stable'];
+  const created: string[] = [];
+  try {
+    for (const [id, engine, version] of [['chrome-1-stable', 'chrome', '1'], ['chrome-2-stable', 'chrome', '2'], ['firefox-3-stable', 'firefox', '3']]) {
+      const dir = path.join(Paths.kernels, id!);
+      fs.mkdirSync(dir, { recursive: true });
+      const exePath = path.join(dir, 'browser');
+      fs.writeFileSync(exePath, 'test');
+      fs.writeFileSync(path.join(dir, 'kernel.json'), JSON.stringify({ id, engine, version, path: dir, exePath, installedAt: '' }));
+    }
+    store.saveSettings({ defaultEngine: 'chrome', defaultKernelId: 'firefox-3-stable' });
+    const source = store.createProfile({ name: 'Engine check', engine: 'chrome' });
+    created.push(source.id);
+    assert.ok(source.kernelId.startsWith('chrome-'));
+    const duplicate = store.duplicateProfile(source.id);
+    created.push(duplicate.id);
+    assert.ok(duplicate.kernelId.startsWith('chrome-'));
+    assert.notEqual(source.kernelId, duplicate.kernelId);
+    // A fresh cache with an unrelated entry must not hide older installed versions.
+    fs.writeFileSync(Paths.storeFile('catalog.json'), JSON.stringify({ schemaVersion: 2, fetchedAt: Date.now(), builds: [{ id: 'other', engine: 'chrome', version: '9', channel: 'stable', os: '', downloadUrl: '', installed: false, path: '', sizeBytes: 0 }] }));
+    const listed = await listKernels();
+    for (const id of ids) assert.ok(listed.some((build) => build.id === id && build.installed));
+  } finally {
+    for (const id of created) store.deleteProfile(id, false);
+    store.saveSettings({ defaultEngine: previous.defaultEngine, defaultKernelId: previous.defaultKernelId });
+    for (const id of ids) fs.rmSync(path.join(Paths.kernels, id), { recursive: true, force: true });
+    fs.rmSync(Paths.storeFile('catalog.json'), { force: true });
+  }
+});
+
+test('clearing a live profile never clears unrelated storage or hides CDP errors', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const profile = store.draftProfile({ name: 'Clear scope test' });
+  const session = new BrowserSession(profile, async () => { throw new Error('unused'); });
+  const calls: string[] = [];
+  const fake = { send: async (method: string) => {
+    calls.push(method);
+    if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'page', type: 'page' }] };
+    if (method === 'Target.attachToTarget') return { sessionId: 'session' };
+    if (method === 'Network.clearBrowserCookies') throw new Error('rejected');
+    return {};
+  } };
+  (session as unknown as { cdp: unknown }).cdp = fake;
+  assert.equal(await session.clearStorage('cache'), true);
+  assert.ok(calls.includes('Network.clearBrowserCache'));
+  assert.ok(!calls.includes('Network.clearBrowserCookies'));
+  assert.ok(!calls.includes('Storage.clearDataForOrigin'));
+  assert.equal(await session.clearStorage('cookies'), false);
+  const previousCalls = calls.length;
+  assert.equal(await session.clearStorage('siteData'), false);
+  assert.equal(calls.length, previousCalls);
+});
+
+test('a proxy fallback is reported and never monitored as the active connection', async () => {
+  const net = await import('node:net');
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const upstream = net.createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const port = (upstream.address() as import('node:net').AddressInfo).port;
+  const profile = store.draftProfile({ name: 'Proxy fallback', engine: 'firefox',
+    proxy: { ...normalizeProxy({ type: 'http', host: '127.0.0.1', port }), fallbackDirect: true },
+    tools: { ...store.defaultTools(), proxyWatch: true },
+  });
+  const session = new BrowserSession(profile, async () => ({ exe: process.execPath, engine: 'firefox', version: '1' }));
+  try {
+    const info = await session.start(profile, 'about:blank');
+    assert.equal(info.proxyFellBack, true);
+    assert.equal((session as unknown as { watchTimer: unknown }).watchTimer, null);
+    assert.equal(info.exitIp, '');
+  } finally {
+    await session.stop();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    fs.rmSync((await import('../src/main/core/paths')).Paths.profileData(profile.id), { recursive: true, force: true });
+  }
+});
+
+test('Brave catalog uses exact vendor assets, channel, Chromium version and SHA-256', async () => {
+  const { braveBuildsFromReleases, verifyArchiveSha256 } = await import('../src/main/core/catalog');
+  const crypto = await import('node:crypto');
+  const version = '1.101.50';
+  const name = `brave-v${version}-win32-x64.zip`;
+  const digest = crypto.createHash('sha256').update('trusted').digest('hex');
+  const asset = { name, browser_download_url: `https://github.com/brave/brave-browser/releases/download/v${version}/${name}`, size: 7, digest: `sha256:${digest}` };
+  const release = { name: `Beta v${version} (Chromium 158.0.8127.37)`, tag_name: `v${version}`, assets: [asset] };
+  const rows = braveBuildsFromReleases([release]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.engine, 'brave');
+  assert.equal(rows[0]!.channel, 'beta');
+  assert.equal(rows[0]!.version, version);
+  assert.equal(rows[0]!.runtimeVersion, '158.0.8127.37');
+  assert.equal(rows[0]!.sha256, digest);
+  assert.equal(braveBuildsFromReleases([{ ...release, assets: [{ ...asset, digest: '' }] }]).length, 0);
+  assert.equal(braveBuildsFromReleases([{ ...release, assets: [{ ...asset, browser_download_url: 'https://other.test/file.zip' }] }]).length, 0);
+  assert.equal(braveBuildsFromReleases([{ ...release, name: `Release v${version} (Chromium 158.0.8127.37)`, tag_name: 'v1.2.3' }]).length, 0);
+  assert.equal(braveBuildsFromReleases([{ ...release, name: `Release v${version} (Chromium 158.0.8127.37)`, prerelease: true }]).length, 0);
+  const archive = path.join(scratch, 'checksum-test');
+  fs.writeFileSync(archive, 'trusted');
+  try {
+    await verifyArchiveSha256(archive, digest);
+    await assert.rejects(verifyArchiveSha256(archive, '0'.repeat(64)), /integrity/);
+    await assert.rejects(verifyArchiveSha256(archive, 'bad'), /Invalid/);
+  } finally { fs.rmSync(archive, { force: true }); }
+});
+
+test('country names follow the bundled flag code across countries and reject unknown codes', async () => {
+  const { countryCode, countryName } = await import('../src/shared/countries');
+  const countries = JSON.parse(fs.readFileSync('node_modules/flag-icons/country.json', 'utf8')) as { code: string }[];
+  for (const entry of countries.filter((item) => /^[a-z]{2}$/.test(item.code))) {
+    assert.equal(countryCode(entry.code), entry.code.toUpperCase());
+    assert.ok(countryName(entry.code));
+  }
+  assert.equal(countryName('DE', 'United Kingdom'), 'Germany');
+  assert.equal(countryName('gb', 'Germany'), 'United Kingdom');
+  assert.equal(countryCode('zz'), '');
+});
+
+test('history retains previous sessions and marks redirects without duplicating them', () => {
+  const profile = store.createProfile({ name: 'History persistence' });
+  const dir = path.join(scratch, 'history');
+  fs.mkdirSync(dir, { recursive: true });
+  const old = { profileId: profile.id, profileName: profile.name, at: '2020-01-01T00:00:00.000Z', url: 'https://previous.test/', title: '', how: 'link', hop: false };
+  fs.writeFileSync(path.join(dir, `${profile.id}.jsonl`), JSON.stringify(old) + '\n');
+  try {
+    history.record(profile.id, 'https://redirect.test/');
+    history.markRedirect(profile.id, 'https://redirect.test/');
+    history.record(profile.id, 'https://final.test/#fragment');
+    history.attachTitle(profile.id, 'https://final.test/#fragment', 'Final title');
+    const rows = history.list(profile.id);
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]!.title, 'Final title');
+    assert.equal(rows[0]!.url, 'https://final.test/#fragment');
+    assert.equal(rows[1]!.hop, true);
+    assert.equal(rows[2]!.url, old.url);
+    const disk = fs.readFileSync(path.join(dir, `${profile.id}.jsonl`), 'utf8');
+    assert.match(disk, /"hop":true/);
+    assert.match(disk, /Final title/);
+  } finally { history.clear(profile.id); store.deleteProfile(profile.id, false); }
+});
+
+test('CDP event listeners are active before auto-attach can pause a target', async () => {
+  const { BrowserSession } = await import('../src/main/core/launcher');
+  const { CdpClient } = await import('../src/main/core/cdp');
+  const profile = store.draftProfile({ name: 'Early target' });
+  const session = new BrowserSession(profile, async () => { throw new Error('unused'); });
+  const listeners = new Map<string, (params: Record<string, unknown>, id: string) => void>();
+  const calls: string[] = [];
+  const fake = {
+    on(method: string, handler: (params: Record<string, unknown>, id: string) => void) { listeners.set(method, handler); return () => {}; },
+    async send(method: string) {
+      calls.push(method);
+      if (method === 'Target.setAutoAttach') listeners.get('Target.attachedToTarget')?.({ sessionId: 'early', targetInfo: { type: 'page', targetId: 'target-1' } }, '');
+      if (method === 'Target.getTargets') return { targetInfos: [{ type: 'page', targetId: 'target-1' }] };
+      return {};
+    },
+  };
+  const original = CdpClient.connect;
+  CdpClient.connect = async () => fake as unknown as Awaited<ReturnType<typeof CdpClient.connect>>;
+  try {
+    await (session as unknown as { attachCDP(engine: string): Promise<void> }).attachCDP('chrome');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(calls.includes('Page.addScriptToEvaluateOnNewDocument'));
+    assert.ok(calls.includes('Runtime.runIfWaitingForDebugger'));
+    assert.ok(!calls.includes('Target.attachToTarget'), 'an auto-attached target must not be attached twice');
+  } finally { CdpClient.connect = original; }
+});
+
+test('new profiles honor the configured start page and preserve explicit URLs', () => {
+  const before = store.getSettings().startPage;
+  try {
+    assert.equal(store.DEFAULT_SETTINGS.startPage, 'https://browsercan.net');
+    store.saveSettings({ startPage: 'https://start.example/' });
+    assert.equal(store.draftProfile({ name: 'Default start' }).startUrl, 'https://start.example/');
+    assert.equal(store.draftProfile({ name: 'Custom start', startUrl: 'https://custom.example/' }).startUrl, 'https://custom.example/');
+  } finally { store.saveSettings({ startPage: before }); }
 });

@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
-import type { ProfileSummary, SessionInfo } from '../../shared/types';
+import type { ProfileSummary, ProfileLocation, SessionInfo } from '../../shared/types';
 import { Icon } from './Icon';
+import { BrowserLogo } from './BrowserLogo';
+import { CountryFlag } from './CountryFlag';
+import { countryName } from '../../shared/countries';
 import { Button, Chip, IconButton, Menu, clock, when, type MenuAction } from './UI';
 import { useI18n } from '../i18n';
 
@@ -24,6 +27,7 @@ const ENGINE_LABEL: Record<string, string> = {
 
 export function ProfileCard({
   profile,
+  location,
   session,
   selected,
   onSelect,
@@ -32,6 +36,7 @@ export function ProfileCard({
   onMenu,
 }: {
   profile: ProfileSummary;
+  location?: ProfileLocation;
   session?: SessionInfo;
   selected: boolean;
   onSelect: () => void;
@@ -41,13 +46,6 @@ export function ProfileCard({
 }): ReactNode {
   const { t } = useI18n();
   const running = Boolean(session) || profile.running;
-
-  const initials = profile.name
-    .split(/[\s\-_]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('');
 
   const statusLabel = profile.status ? t(`card.status.${profile.status}`, profile.status) : '';
   const statusTone = profile.status === 'banned' ? 'err' : profile.status === 'warm' ? 'warn' : profile.status === 'new' ? 'accent' : 'muted';
@@ -72,28 +70,17 @@ export function ProfileCard({
           onClick={onOpen}
           title={openLabel}
           type="button"
-          style={{ background: profile.colors.tint, borderColor: profile.colors.accent + '44' }}
         >
-          <span style={{ color: profile.colors.accent }}>{initials || 'J'}</span>
+          <BrowserLogo engine={session?.engine ?? profile.engine} size={25} />
           {running ? <span className="live" /> : null}
         </button>
 
         <div className="profile-title">
           <div className="profile-name" title={profile.name}>
             <span className="truncate">{profile.name}</span>
-            {profile.freshSession ? (
-              <span className="lock" title={t('ed.fresh')}>
-                <Icon name="refresh" size={14} />
-              </span>
-            ) : null}
+
           </div>
           <div className="profile-meta">
-            {profile.group ? (
-              <>
-                <span className="truncate">{profile.group}</span>
-                <span className="sep">·</span>
-              </>
-            ) : null}
             <span className="truncate">
               {running
                 ? t('generic.running')
@@ -136,10 +123,7 @@ export function ProfileCard({
           {profile.screen}
         </Chip>
 
-        <Chip tone={profile.hasProxy ? 'accent' : 'muted'} title={`${profile.proxyLabel} ${profile.proxyCountry}`}>
-          <Icon name="globe" size={12} />
-          {profile.hasProxy ? profile.proxyCountry || profile.proxyLabel : t('generic.direct')}
-        </Chip>
+        <LocationChip location={location} direct={!profile.hasProxy || Boolean(session?.proxyFellBack)} />
 
         {profile.linked ? (
           <Chip tone="warn" title={t('card.linked')}>
@@ -150,21 +134,6 @@ export function ProfileCard({
 
         {statusLabel ? <Chip tone={statusTone as 'accent' | 'ok' | 'warn' | 'err'}>{statusLabel}</Chip> : null}
       </div>
-
-      {profile.tags.length > 0 ? (
-        <div className="profile-tags">
-          {profile.tags.slice(0, 5).map((tag) => (
-            <span key={tag} className="chip muted" style={{ height: 19, fontSize: 11 }}>
-              #{tag}
-            </span>
-          ))}
-          {profile.tags.length > 5 ? (
-            <span className="chip muted" style={{ height: 19, fontSize: 11 }}>
-              +{profile.tags.length - 5}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="profile-foot">
         <button
@@ -187,7 +156,7 @@ export function ProfileCard({
         </span>
 
         <span className="faint num" style={{ fontSize: 11.5 }} title={`${profile.browserVersion} · ${ENGINE_LABEL[profile.engine] ?? profile.engine}`}>
-          {ENGINE_LABEL[profile.engine] ?? profile.engine} {profile.browserVersion.split('.')[0]}
+          <BrowserLogo engine={session?.engine ?? profile.engine} size={14} /> {ENGINE_LABEL[session?.engine ?? profile.engine] ?? (session?.engine ?? profile.engine)} {profile.browserVersion.split('.')[0]}
         </span>
 
         <div className="spacer" />
@@ -211,6 +180,7 @@ export function ProfileCard({
 /** A dense row, for the compact density the settings offer. */
 export function ProfileRow({
   profile,
+  location,
   session,
   selected,
   onSelect,
@@ -219,6 +189,7 @@ export function ProfileRow({
   onMenu,
 }: {
   profile: ProfileSummary;
+  location?: ProfileLocation;
   session?: SessionInfo;
   selected: boolean;
   onSelect: () => void;
@@ -235,9 +206,7 @@ export function ProfileRow({
         <Icon name="check" strokeWidth={3} />
       </button>
 
-      <div className="row-icon" style={{ background: profile.colors.tint, color: profile.colors.accent }}>
-        <Icon name={osIcon(profile.os)} />
-      </div>
+      <div className="row-icon"><BrowserLogo engine={session?.engine ?? profile.engine} size={24} /></div>
 
       <div className="row-main" onClick={onEdit} style={{ cursor: 'pointer' }}>
         <div className="row-title">
@@ -246,12 +215,11 @@ export function ProfileRow({
           {profile.linked ? <Chip tone="warn" icon="link">{t('card.linked.short', 'Linked')}</Chip> : null}
         </div>
         <div className="row-sub">
-          {shortOs(profile.os)} · {profile.screen} · {profile.timezone} ·{' '}
-          {profile.hasProxy ? profile.proxyCountry || profile.proxyLabel : t('generic.direct')} ·{' '}
-          {profile.lastOpenedAt ? t('card.opened').replace('{when}', when(profile.lastOpenedAt)) : t('card.never')}
+          {shortOs(profile.os)} · {profile.screen} · {profile.lastOpenedAt ? t('card.opened').replace('{when}', when(profile.lastOpenedAt)) : t('card.never')}
         </div>
       </div>
 
+      <LocationChip location={location} direct={!profile.hasProxy || Boolean(session?.proxyFellBack)} />
       <div className="chip muted" title={t('card.signature')}>
         {profile.signature}
       </div>
@@ -267,6 +235,13 @@ export function ProfileRow({
       </div>
     </div>
   );
+}
+
+function LocationChip({ location, direct }: { location?: ProfileLocation; direct: boolean }): ReactNode {
+  return <Chip tone="muted" title={`${direct ? 'Direct connection' : 'Proxy connection'} · checked with ip-api.com`}>
+    {location?.ok ? <><CountryFlag code={location.countryCode} size={16} />{countryName(location.countryCode, location.country)}</> : <><Icon name="globe" size={14} />{location ? 'Location unavailable' : 'Detecting location…'}</>}
+    {direct ? ' · Direct' : null}
+  </Chip>;
 }
 
 export function shortOs(target: string): string {

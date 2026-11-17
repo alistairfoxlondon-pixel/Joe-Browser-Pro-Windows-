@@ -485,7 +485,7 @@ test('every interactive control carries a name a person can hear', async () => {
 
 /* ------------------------------------------------------------------ the gate */
 
-test('the gate renders and can be dismissed', async () => {
+test('the gate requires an account', async () => {
   signOutCloud();
   const settings = await mockBridge.getSettings();
 
@@ -497,11 +497,7 @@ test('the gate renders and can be dismissed', async () => {
     body.toLowerCase().includes('create an account') || body.toLowerCase().includes('sign in'),
     'the gate offers no way in',
   );
-  // The gate has to be escapable: a first-run window with no way past it is a hostage.
-  assert.ok(
-    body.toLowerCase().includes('without an account'),
-    'the gate offers no way to skip it',
-  );
+  assert.equal(container.querySelector('.gate-skip'), null, 'local mode must not be offered');
   assert.deepEqual(problems, [], `AccountGate: ${problems.join(' | ')}`);
 
   // The security panel owns its local identity; with the mock bridge's local account present the
@@ -694,6 +690,7 @@ test('registration enters an empty workspace and a remembered account survives r
   mockBridge.listProfiles = async () => [];
   mockBridge.listAccounts = async () => [];
   signOutCloud();
+  win.localStorage.setItem('joe-local-mode', '1');
   const originalSignUp = fakeCloud.signUp.bind(fakeCloud);
   fakeCloud.signUp = async (email: string) => {
     registered = true;
@@ -765,4 +762,322 @@ test('a failed startup can reload settings, app info and account state', async (
     await teardown();
     mockBridge.getSettings = original;
   }
+});
+
+test('new profile editor creates no record until save', async () => {
+  signIn();
+  reset();
+  const settings = await mockBridge.getSettings();
+  const existing = await mockBridge.listProfiles();
+  const before = existing.length;
+  let saved = false;
+  await render(hosted(React.createElement(ProfileEditor, {
+    profile: null, onClose: () => undefined, onSaved: () => { saved = true; },
+    settings, existing, toast: { toast: () => undefined } as never,
+  })));
+  assert.equal((await mockBridge.listProfiles()).length, before);
+  const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Save changes'));
+  assert.ok(save);
+  await act(async () => { save.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(saved, true);
+  assert.equal((await mockBridge.listProfiles()).length, before + 1);
+  await teardown();
+});
+
+test('saving an unrelated profile edit does not send a blank proxy password', async () => {
+  signIn();
+  reset();
+  const settings = await mockBridge.getSettings();
+  const existing = await mockBridge.listProfiles();
+  const profile = (await mockBridge.getProfile(existing[0]!.id))!;
+  const original = mockBridge.updateProfile;
+  let sent: Parameters<typeof mockBridge.updateProfile>[1] | undefined;
+  mockBridge.updateProfile = async (id, patch) => { sent = patch; return { ...profile, ...patch, id }; };
+  try {
+    await render(hosted(React.createElement(ProfileEditor, {
+      profile, onClose: () => undefined, onSaved: () => undefined,
+      settings, existing, toast: { toast: () => undefined } as never,
+    })));
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Save changes'));
+    assert.ok(save);
+    await act(async () => { save.click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+    assert.ok(sent?.proxy);
+    assert.equal(sent.proxy.password, undefined);
+  } finally {
+    mockBridge.updateProfile = original;
+    await teardown();
+  }
+});
+
+test('proxy host Ctrl+B fills all fields without toggling global shortcuts', async () => {
+  signIn(); reset();
+  const original = mockBridge.proxyClipboard;
+  mockBridge.proxyClipboard = async () => ({ type: 'socks5', host: 'example.test', port: 1080, user: 'alice', password: 'p:word' });
+  try {
+    await render(hosted(React.createElement(ProxiesPage, { profiles: [], refreshProfiles: async () => undefined })));
+    const button = [...container.querySelectorAll('button')].find((el) => el.textContent?.includes('Add proxy'));
+    assert.ok(button);
+    await act(async () => { button.click(); });
+    const host = container.querySelector('input[placeholder="gate.example.com"]') as HTMLInputElement;
+    assert.ok(host);
+    let bubbled = false;
+    const listener = () => { bubbled = true; };
+    win.addEventListener('keydown', listener);
+    await act(async () => { host.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
+    win.removeEventListener('keydown', listener);
+    const dialog = host.closest('.modal')!;
+    const inputs = [...dialog.querySelectorAll('input')];
+    assert.equal(host.value, 'example.test');
+    assert.ok(inputs.some(input => input.value === '1080'));
+    assert.ok(inputs.some(input => input.value === 'alice'));
+    assert.ok(inputs.some(input => input.value === 'p:word' && input.type === 'password'));
+    assert.equal(bubbled, false);
+    assert.ok(!dialog.textContent?.includes('Stored encrypted'));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.proxyClipboard = original; await teardown(); }
+});
+
+test('profile proxy host Ctrl+B fills credentials', async () => {
+  signIn(); reset();
+  const original = mockBridge.proxyClipboard;
+  mockBridge.proxyClipboard = async () => ({ type: 'http', host: 'profile-proxy.test', port: 3128, user: 'bob', password: 'secret' });
+  try {
+    const profiles = await mockBridge.listProfiles();
+    const full = (await mockBridge.getProfile(profiles[0]!.id))!;
+    const settings = await mockBridge.getSettings();
+    await render(hosted(React.createElement(ProfileEditor, { profile: full, onClose: () => undefined, onSaved: () => undefined, settings, existing: profiles, toast: { toast: () => undefined } as never })));
+    const tab = [...container.querySelectorAll('button')].find(el => el.textContent?.trim() === 'Proxy' || el.textContent?.trim() === 'Connection');
+    assert.ok(tab);
+    await act(async () => { tab.click(); });
+    const host = container.querySelector('input[placeholder="gate.example.com"]') as HTMLInputElement;
+    assert.ok(host);
+    await act(async () => { host.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
+    const inputs = [...container.querySelectorAll('input')];
+    assert.equal(host.value, 'profile-proxy.test');
+    for (const value of ['3128', 'bob', 'secret']) assert.ok(inputs.some(input => input.value === value));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.proxyClipboard = original; await teardown(); }
+});
+
+test('diagnostics only sends the exit IP for a risk lookup when requested', async () => {
+  signIn(); reset();
+  const originalReport = mockBridge.networkReport;
+  const originalRisk = mockBridge.checkIpRisk;
+  let requested = '';
+  mockBridge.networkReport = async () => ({ ok: true, ip: '8.8.8.8', country: 'United States', countryCode: 'US', city: 'X', region: '', timezone: 'UTC', isp: 'Example', resolverIp: '', resolverGeo: '', latencyMs: 20, clockSkewSeconds: null, sources: [], warnings: [], error: '' });
+  mockBridge.checkIpRisk = async (ip) => { requested = ip; return { ip, score: 45, proxy: 'yes', type: 'VPN' }; };
+  try {
+    await render(hosted(React.createElement(ProxiesPage, { profiles: [], refreshProfiles: async () => undefined })));
+    const diag = [...container.querySelectorAll('button')].find(el => el.textContent?.includes('Network diagnostics'));
+    assert.ok(diag);
+    await act(async () => { diag.click(); await Promise.resolve(); });
+    assert.equal(requested, '');
+    const risk = [...container.querySelectorAll('button')].find(el => el.textContent?.includes('Check risk'));
+    assert.ok(risk);
+    await act(async () => { risk.click(); await Promise.resolve(); });
+    assert.equal(requested, '8.8.8.8');
+    assert.ok(text().includes('45/100'));
+    assert.ok(text().includes('not proof of fraud'));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.networkReport = originalReport; mockBridge.checkIpRisk = originalRisk; await teardown(); }
+});
+
+test('settings shows the actual circular flag for each available language', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const info = await mockBridge.getAppInfo();
+  await render(hosted(React.createElement(SettingsPage, { settings, info, saveSettings: async () => settings, refreshProfiles: async () => undefined, onSignedOut: () => undefined })));
+  const languages = await mockBridge.listLanguages();
+  assert.equal(container.querySelectorAll('.lang .country-flag').length, languages.length);
+  for (const language of languages) {
+    const button = [...container.querySelectorAll('.lang')].find(el => el.textContent?.includes(language.native));
+    assert.ok(button, language.native);
+    assert.ok(button.querySelector(`.fi-${language.flag.toLowerCase()}`), language.native);
+  }
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
+test('profiles show the detected country flag and the selected browser mark', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const profile = { ...profiles[0]!, engine: 'chrome', locationKey: 'route-a', hasProxy: true };
+  const original = mockBridge.getProfileLocation;
+  mockBridge.getProfileLocation = async () => ({ key: 'route-a', ok: true, country: 'Bangladesh', countryCode: 'BD' });
+  try {
+    await render(hosted(React.createElement(ProfilesPage, { profiles: [profile], runningById: new Map(), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+    const card = container.querySelector('[data-profile-card]')!;
+    assert.ok(card.querySelector('.fi-bd'));
+    assert.ok(card.textContent?.includes('Bangladesh'));
+    assert.ok(card.querySelector('.avatar img[src="./brand/chrome.png"]'));
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.getProfileLocation = original; await teardown(); }
+});
+
+test('settings navigation keeps essential controls and never displays language percentages', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const info = await mockBridge.getAppInfo();
+  await render(hosted(React.createElement(SettingsPage, { settings, info, saveSettings: async () => settings, refreshProfiles: async () => undefined, onSignedOut: () => undefined })));
+  assert.ok(container.querySelector('.lang-grid'));
+  assert.equal(container.querySelectorAll('.lang .cov').length, 0);
+  assert.ok([...container.querySelectorAll('.lang')].every(el => !/\d+%/.test(el.textContent ?? '')));
+  const go = async (label: string) => {
+    const item = [...container.querySelectorAll('.settings-nav-item')].find(el => el.textContent?.includes(label)) as HTMLButtonElement;
+    assert.ok(item, label);
+    await act(async () => { item.click(); });
+  };
+  await go('General');
+  assert.ok(container.querySelector('select'));
+  await go('Account & security');
+  assert.ok(text().includes('Subscription'));
+  await go('Data & storage');
+  assert.ok(text().includes('Reset'));
+  await go('Appearance');
+  assert.equal(container.querySelectorAll('.lang .country-flag').length, (await mockBridge.listLanguages()).length);
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
+test('theme changes immediately, keeps the shell mounted, and saves rapid changes in order', async () => {
+  signIn(); reset();
+  const originalGet = mockBridge.getSettings;
+  const originalSave = mockBridge.saveSettings;
+  const base = { ...(await originalGet()), theme: 'dark' as const };
+  let persisted = { ...base } as typeof base | Awaited<ReturnType<typeof originalGet>>;
+  const pending: Array<() => void> = [];
+  const calls: string[] = [];
+  mockBridge.getSettings = async () => ({ ...persisted });
+  mockBridge.saveSettings = async patch => {
+    calls.push(String(patch.theme));
+    await new Promise<void>(resolve => pending.push(resolve));
+    persisted = { ...persisted, ...patch };
+    return { ...persisted };
+  };
+  try {
+    await render(React.createElement(App));
+    const shell = container.querySelector('.shell');
+    const toggle = container.querySelector('.theme-toggle') as HTMLButtonElement;
+    assert.ok(shell && toggle);
+    await act(async () => { toggle.click(); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'light');
+    assert.equal(container.querySelector('.shell'), shell);
+    assert.deepEqual(calls, ['light']);
+    await act(async () => { toggle.click(); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'dark');
+    assert.deepEqual(calls, ['light']);
+    await act(async () => { pending.shift()!(); await Promise.resolve(); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'dark');
+    assert.deepEqual(calls, ['light', 'dark']);
+    await act(async () => { pending.shift()!(); await Promise.resolve(); await Promise.resolve(); });
+    assert.equal(persisted.theme, 'dark');
+    assert.equal(container.querySelector('.shell'), shell);
+    assert.equal(win.localStorage.getItem('joe-theme'), 'dark');
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.getSettings = originalGet; mockBridge.saveSettings = originalSave; await teardown(); }
+});
+
+test('restoring settings does not flash dark over the early light theme', async () => {
+  signIn(); reset();
+  const originalGet = mockBridge.getSettings;
+  const initial = { ...(await originalGet()), theme: 'light' as const };
+  let finish: ((settings: typeof initial) => void) | undefined;
+  mockBridge.getSettings = () => new Promise(resolve => { finish = resolve; });
+  win.document.documentElement.dataset.theme = 'light';
+  try {
+    await render(React.createElement(App));
+    assert.equal(win.document.documentElement.dataset.theme, 'light');
+    assert.ok(finish);
+    await act(async () => { finish!(initial); await Promise.resolve(); });
+    assert.equal(win.document.documentElement.dataset.theme, 'light');
+    assert.deepEqual(problems, []);
+  } finally { mockBridge.getSettings = originalGet; await teardown(); }
+});
+
+test('profile editor removes group and tags and applies fresh device fingerprints', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const existing = await mockBridge.listProfiles();
+  const profile = (await mockBridge.getProfile(existing[0]!.id))!;
+  const originalDraft = mockBridge.draftProfile;
+  const originalUpdate = mockBridge.updateProfile;
+  const { generateFingerprint } = await import('../src/main/core/fingerprint');
+  let counter = 1000;
+  let saved: typeof profile.fingerprint | undefined;
+  mockBridge.draftProfile = async (input) => ({ ...profile, ...input, fingerprint: generateFingerprint({ seed: ++counter, os: input.fingerprint?.os, engine: profile.engine }) });
+  mockBridge.updateProfile = async (id, patch) => { saved = patch.fingerprint; return { ...profile, ...patch, id }; };
+  try {
+    await render(hosted(React.createElement(ProfileEditor, { profile, onClose: () => undefined, onSaved: () => undefined, settings, existing, toast: { toast: () => undefined } as never })));
+    assert.ok(!text().includes('Group / folder'));
+    assert.ok(!text().includes('Tags'));
+    const tab = [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Fingerprint');
+    assert.ok(tab);
+    await act(async () => { tab.click(); });
+    const click = async (label: string) => {
+      const button = [...container.querySelectorAll('button')].find((item) => item.textContent?.trim().endsWith(label));
+      assert.ok(button, label);
+      await act(async () => { button.click(); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    };
+    await click('New fingerprint');
+    await click('New fingerprint');
+    assert.equal(counter, 1002);
+    const picker = [...container.querySelectorAll('select')].find((item) => [...item.options].some((option) => option.value === 'iPhone'))!;
+    await act(async () => { picker.value = 'iPhone'; picker.dispatchEvent(new win.Event('change', { bubbles: true })); await new Promise((resolve) => setTimeout(resolve, 5)); });
+    assert.equal(picker.value, 'iPhone');
+    assert.equal(counter, 1003);
+    await click('Random identity');
+    assert.notEqual(picker.value, 'iPhone');
+    assert.equal(counter, 1004);
+    await click('Save changes');
+    assert.equal(saved?.seed, 1004);
+    assert.equal(saved?.os, picker.value);
+  } finally { mockBridge.draftProfile = originalDraft; mockBridge.updateProfile = originalUpdate; await teardown(); }
+});
+
+test('profile country label is derived from the same code as its flag', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const profile = { ...profiles[0]!, locationKey: 'route-germany', hasProxy: true };
+  const original = mockBridge.getProfileLocation;
+  mockBridge.getProfileLocation = async () => ({ key: 'route-germany', ok: true, country: 'United Kingdom', countryCode: 'DE' });
+  try {
+    await render(hosted(React.createElement(ProfilesPage, { profiles: [profile], runningById: new Map(), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+    const card = container.querySelector('[data-profile-card]')!;
+    assert.ok(card.querySelector('.fi-de.fis'));
+    assert.ok(card.textContent?.includes('Germany'));
+    assert.ok(!card.querySelector('.fi-gb'));
+  } finally { mockBridge.getProfileLocation = original; await teardown(); }
+});
+
+test('proxy country label and circular flag use the same country code', async () => {
+  signIn(); reset();
+  const original = mockBridge.listProxies;
+  const sample = (await original())[0]!;
+  mockBridge.listProxies = async () => [{ ...sample, name: 'Test route', lastCountry: 'United Kingdom', lastCountryCode: 'DE', lastCity: '' }];
+  try {
+    await render(hosted(React.createElement(ProxiesPage, { profiles: [], refreshProfiles: async () => undefined })));
+    const row = container.querySelector('.proxy-row')!;
+    assert.ok(row.querySelector('.fi-de.fis'));
+    assert.ok(row.textContent?.includes('Germany'));
+    assert.ok(!row.querySelector('.fi-gb'));
+  } finally { mockBridge.listProxies = original; await teardown(); }
+});
+
+test('a session that fell back to direct shows the direct location rather than the proxy location', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const profile = { ...profiles[0]!, locationKey: 'proxy-route', hasProxy: true };
+  const original = mockBridge.getProfileLocation;
+  mockBridge.getProfileLocation = async () => ({ key: 'direct', ok: true, country: 'United Kingdom', countryCode: 'GB' });
+  const session = { profileId: profile.id, profileName: profile.name, state: 'running', debugPort: 0, pid: 0, engine: profile.engine, browserVersion: profile.browserVersion, startedAt: '', exitIp: '', lastError: '', proxyFellBack: true } as const;
+  try {
+    await render(hosted(React.createElement(ProfilesPage, { profiles: [profile], runningById: new Map([[profile.id, session]]), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+    const card = container.querySelector('[data-profile-card]')!;
+    assert.ok(card.querySelector('.fi-gb'));
+    assert.ok(card.textContent?.includes('United Kingdom'));
+    assert.ok(card.textContent?.includes('Direct'));
+  } finally { mockBridge.getProfileLocation = original; await teardown(); }
 });

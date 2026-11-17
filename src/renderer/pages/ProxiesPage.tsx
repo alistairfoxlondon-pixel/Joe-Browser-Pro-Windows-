@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { parseProxyLine } from '../../shared/parseProxy';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { NetworkReport, ProfileSummary, ProxyBatchRow, ProxyConfig, ProxyEntry } from '../../shared/types';
 import { PROXY_TYPES } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
+import { CountryFlag } from '../components/CountryFlag';
+import { countryName } from '../../shared/countries';
 import {
   Banner,
   Button,
@@ -14,12 +17,13 @@ import {
   Modal,
   SearchInput,
   Segmented,
-  Stat,
   useConfirm,
   useToast,
-  when,
 } from '../components/UI';
 import { messageOf } from '../util';
+import { useSubscription } from '../cloud/subscription';
+import { FREE_PROFILE_LIMIT } from '../cloud/client';
+import { ActivateDialog } from '../components/ActivateDialog';
 
 /**
  * The proxy vault.
@@ -43,6 +47,8 @@ export function ProxiesPage({
   const { t } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
+  const subscription = useSubscription();
+  const [activateOpen, setActivateOpen] = useState(false);
 
   const [entries, setEntries] = useState<ProxyEntry[]>([]);
   const [query, setQuery] = useState('');
@@ -52,7 +58,12 @@ export function ProxiesPage({
   const [testing, setTesting] = useState<Set<string>>(new Set());
   const [testingAll, setTestingAll] = useState(false);
   const [network, setNetwork] = useState<NetworkReport | null>(null);
+  const diagnosticsSequence = useRef(0);
   const [loadingNetwork, setLoadingNetwork] = useState(false);
+  const [networkLabel, setNetworkLabel] = useState('');
+  const [risk, setRisk] = useState<{ ip: string; score: number; proxy: string; type: string } | null>(null);
+  const [riskError, setRiskError] = useState('');
+  const [riskLoading, setRiskLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -88,7 +99,7 @@ export function ProxiesPage({
       if (updated.lastStatus === 1) {
         toast.success(
           t('proxy.working'),
-          `${updated.lastIp || updated.config.host} · ${updated.lastCountry} · ${updated.lastLatencyMs} ms`,
+          `${updated.lastIp || updated.config.host} · ${countryName(updated.lastCountryCode, updated.lastCountry)} · ${updated.lastLatencyMs} ms`,
         );
       } else {
         toast.error(t('proxy.failed'), `${updated.config.host}:${updated.config.port}`);
@@ -119,6 +130,7 @@ export function ProxiesPage({
   };
 
   const createProfile = async (entry: ProxyEntry) => {
+    if (subscription.tier === 'free' && profiles.length >= FREE_PROFILE_LIMIT) { setActivateOpen(true); return; }
     try {
       const created = await bridge().createProfileFromProxy(entry.id);
       await refreshProfiles();
@@ -145,14 +157,19 @@ export function ProxiesPage({
   };
 
   const diagnostics = async (entry: ProxyEntry | null) => {
+    const sequence = ++diagnosticsSequence.current;
     setLoadingNetwork(true);
     setNetwork(null);
+    setRisk(null);
+    setRiskError('');
+    setNetworkLabel(entry ? (entry.name || `${entry.config.host}:${entry.config.port}`) : t('proxy.direct'));
     try {
-      setNetwork(await bridge().networkReport(entry?.id));
+      const report = await bridge().networkReport(entry?.id);
+      if (sequence === diagnosticsSequence.current) setNetwork(report);
     } catch (error) {
-      toast.error(t('net.title'), messageOf(error));
+      if (sequence === diagnosticsSequence.current) toast.error(t('net.title'), messageOf(error));
     } finally {
-      setLoadingNetwork(false);
+      if (sequence === diagnosticsSequence.current) setLoadingNetwork(false);
     }
   };
 
@@ -164,11 +181,7 @@ export function ProxiesPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('proxy.title')}</h1>
-          <div className="sub">
-            {entries.length === 0
-              ? t('sub.proxies')
-              : `${entries.length} saved · ${working} working${failing ? ` · ${failing} failing` : ''}`}
-          </div>
+          {entries.length ? <div className="sub">{entries.length} saved · {working} working{failing ? ` · ${failing} failing` : ''}</div> : null}
         </div>
         <div className="header-actions">
           <SearchInput value={query} onChange={setQuery} placeholder={t('search.proxies')} />
@@ -193,58 +206,40 @@ export function ProxiesPage({
       <div className="content">
         <div className="content-inner">
           {network || loadingNetwork ? (
-            <div className="panel" style={{ marginBottom: 16 }}>
-              <div className="panel-head">
-                <Icon name="wifi" size={16} />
-                <h3>{t('net.title')}</h3>
-                <div className="grow" />
-                {loadingNetwork ? <span className="spinner" style={{ color: 'var(--accent)' }} /> : null}
-                <button className="icon-btn sm" onClick={() => setNetwork(null)} type="button" aria-label={t('btn.close')}>
-                  <Icon name="close" />
-                </button>
+            <section className="panel network-panel" aria-label={t('net.title')}>
+              <div className="network-heading">
+                <div><h3>{t('net.title')}</h3><span className="muted">{networkLabel}</span></div>
+                {loadingNetwork ? <span className="spinner" /> : null}
+                <button className="icon-btn sm" onClick={() => setNetwork(null)} type="button" aria-label={t('btn.close')} disabled={loadingNetwork}><Icon name="close" /></button>
               </div>
-
-              {network ? (
-                <>
-                  <div className="stat-grid" style={{ marginBottom: 12 }}>
-                    <Stat value={<span className="mono" style={{ fontSize: 15 }}>{network.ip || '—'}</span>} label={t('net.exit')} />
-                    <Stat value={network.country || '—'} label={t('net.country')} />
-                    <Stat value={network.city || '—'} label={t('net.city')} />
-                    <Stat value={`${network.latencyMs} ms`} label={t('net.latency')} />
-                    <Stat value={network.timezone || '—'} label={t('net.tz')} />
-                    <Stat value={network.isp || '—'} label={t('net.isp')} />
+              {network ? <>
+                {!network.ok ? <Banner tone="err" icon="info">{network.error || 'Lookup failed.'}</Banner> : <>
+                  <dl className="network-grid">
+                    {[
+                      [t('net.exit'), network.ip], [t('net.country'), network.country], [t('net.city'), network.city],
+                      [t('net.tz'), network.timezone], [t('net.isp'), network.isp], ['Lookup time', `${network.latencyMs} ms`],
+                    ].map(([label, value]) => <div className="network-item" key={label}><dt>{label}</dt><dd>{label === t('net.country') && network.countryCode ? <CountryFlag code={network.countryCode} /> : null}{(label === t('net.country') ? countryName(network.countryCode, value) : value) || '—'}</dd></div>)}
+                  </dl>
+                  <div className="risk-row">
+                    <div><strong>IP risk</strong><div className="hint">Sends the exit IP to proxycheck.io from this device.</div></div>
+                    <Button size="sm" variant="soft" busy={riskLoading} onClick={async () => {
+                      setRiskError(''); setRisk(null); setRiskLoading(true);
+                      try { setRisk(await bridge().checkIpRisk(network.ip)); } catch (error) { setRiskError(messageOf(error)); } finally { setRiskLoading(false); }
+                    }}>Check risk</Button>
                   </div>
-
-                  {network.clockSkewSeconds !== null ? (
-                    <Banner tone={Math.abs(network.clockSkewSeconds) > 30 ? 'warn' : 'ok'} icon="clock">
-                      {t('net.clock')}:{' '}
-                      {Math.abs(network.clockSkewSeconds) < 1
-                        ? t('net.clock.ok')
-                        : t('net.clock.skew').replace('{n}', network.clockSkewSeconds.toFixed(1))}
-                    </Banner>
-                  ) : null}
-
-                  {network.warnings.map((warning) => (
-                    <div key={warning} style={{ marginTop: 8 }}>
-                      <Banner tone="warn" icon="info">
-                        {warning}
-                      </Banner>
-                    </div>
-                  ))}
-
-                  <div className="hint" style={{ marginTop: 10 }}>
-                    {t('net.sources')}: {network.sources.join(', ') || '—'}
-                  </div>
-                </>
-              ) : null}
-            </div>
+                  {risk && risk.ip === network.ip ? <div className="risk-result">Score: <strong>{risk.score}/100</strong>{risk.type ? ` · ${risk.type}` : ''}<span className="hint"> · Provider estimate, not proof of fraud</span></div> : null}
+                  {riskError ? <div className="hint" role="alert">{riskError}</div> : null}
+                </>}
+                {network.warnings.length ? <details className="network-details"><summary>Lookup details ({network.warnings.length})</summary>{network.warnings.map((warning, i) => <p key={i}>{warning}</p>)}</details> : null}
+              </> : null}
+            </section>
           ) : null}
 
           {entries.length === 0 && !loading ? (
             <EmptyState
               icon="proxy"
               title={t('proxy.empty')}
-              body={t('proxy.empty.body')}
+              body=""
               action={
                 <div className="cluster" style={{ justifyContent: 'center' }}>
                   <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>
@@ -257,39 +252,25 @@ export function ProxiesPage({
               }
             />
           ) : visible.length === 0 ? (
-            <EmptyState icon="search" title={t('empty.nomatch')} body={t('empty.nomatch.sub')} />
+            <EmptyState icon="search" title={t('empty.nomatch')} body="" />
           ) : (
             <div className="rows">
               {visible.map((entry) => {
                 const busy = testing.has(entry.id);
-                const status =
-                  entry.lastStatus === 1 ? 'ok' : entry.lastStatus === -1 ? 'err' : 'muted';
                 return (
-                  <div className="row" key={entry.id}>
-                    <div
-                      className="row-icon"
-                      style={
-                        status === 'ok'
-                          ? { background: 'var(--ok-soft)', color: 'var(--ok)' }
-                          : status === 'err'
-                            ? { background: 'var(--err-soft)', color: 'var(--err)' }
-                            : undefined
-                      }
-                    >
-                      {busy ? <span className="spinner" /> : <Icon name={status === 'ok' ? 'wifi' : status === 'err' ? 'info' : 'proxy'} />}
-                    </div>
+                  <div className="row proxy-row" key={entry.id}>
+                    <div className="proxy-flag">{busy ? <span className="spinner" /> : entry.lastCountryCode ? <CountryFlag code={entry.lastCountryCode} size={36} /> : <Icon name="globe" />}</div>
 
                     <div className="row-main">
                       <div className="row-title">
                         <span className="truncate">{entry.name || `${entry.config.host}:${entry.config.port}`}</span>
                         <Chip tone="muted">{entry.config.type.toUpperCase()}</Chip>
+                        <Chip tone={entry.lastStatus === 1 ? 'accent' : 'muted'}>{entry.lastStatus === 1 ? 'Working' : entry.lastStatus === -1 ? 'Failed' : 'Not tested'}</Chip>
                         {entry.usedBy > 0 ? (
                           <Chip tone="accent" icon="profiles">
                             {t('proxy.used.n').replace('{n}', String(entry.usedBy))}
                           </Chip>
-                        ) : (
-                          <Chip tone="muted">{t('proxy.unused')}</Chip>
-                        )}
+) : null}
                         {entry.usedBy > 1 ? (
                           <Chip tone="warn" icon="link" title="Two profiles behind one address are easy to link">
                             shared
@@ -300,10 +281,9 @@ export function ProxiesPage({
                         <span className="mono">
                           {entry.config.type === 'none' ? '—' : `${entry.config.host || '—'}:${entry.config.port || '—'}`}
                         </span>
-                        {entry.lastCountry ? ` · ${entry.lastCountry}${entry.lastCity ? `, ${entry.lastCity}` : ''}` : ''}
+                        {entry.lastCountry ? ` · ${countryName(entry.lastCountryCode, entry.lastCountry)}${entry.lastCity ? `, ${entry.lastCity}` : ''}` : ''}
                         {entry.lastLatencyMs ? ` · ${entry.lastLatencyMs} ms` : ''}
-                        {entry.lastChecked ? ` · ${when(entry.lastChecked)}` : ` · ${t('proxy.never')}`}
-                        {entry.note ? ` · ${entry.note}` : ''}
+                        {!entry.lastCountry ? ' · Country unknown' : ''}
                       </div>
                     </div>
 
@@ -321,10 +301,13 @@ export function ProxiesPage({
                           {
                             label: t('generic.copy'),
                             icon: 'copy',
-                            onClick: () => {
-                              const text = `${entry.config.host}:${entry.config.port}${entry.config.user ? `:${entry.config.user}:${entry.password ?? ''}` : ''}`;
-                              void navigator.clipboard?.writeText(text);
-                              toast.success(t('generic.copied'), text);
+                            onClick: async () => {
+                              try {
+                                const saved = await bridge().getSavedProxy(entry.id);
+                                const text = `${saved.config.host}:${saved.config.port}${saved.config.user ? `:${saved.config.user}:${saved.password ?? ''}` : ''}`;
+                                await navigator.clipboard.writeText(text);
+                                toast.success(t('generic.copied'));
+                              } catch (error) { toast.error(t('err.generic'), messageOf(error)); }
                             },
                           },
                           { separator: true, label: '', onClick: () => undefined },
@@ -339,13 +322,7 @@ export function ProxiesPage({
             </div>
           )}
 
-          <div className="grid" style={{ marginTop: 18, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-            {profiles.filter((profile) => profile.linked && profile.hasProxy).slice(0, 1).map(() => (
-              <Banner key="link" tone="warn" icon="link">
-                Two profiles share an exit address. A site comparing them sees one visitor.
-              </Banner>
-            ))}
-          </div>
+
         </div>
       </div>
 
@@ -353,6 +330,7 @@ export function ProxiesPage({
         <ProxyEditor
           entry={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
+          onChecked={load}
           onSaved={async () => {
             setEditing(null);
             await load();
@@ -372,6 +350,7 @@ export function ProxiesPage({
 
       {batchTesting ? <BatchTestModal onClose={() => setBatchTesting(false)} /> : null}
 
+      <ActivateDialog open={activateOpen} onClose={() => setActivateOpen(false)} onActivated={() => void subscription.refresh()} />
       {confirm.dialog}
     </>
   );
@@ -413,7 +392,6 @@ function BatchTestModal({ onClose }: { onClose: () => void }): ReactNode {
   return (
     <Modal
       title={t('tools.proxy')}
-      subtitle={t('tools.proxy.hint')}
       onClose={onClose}
       width="wide"
       footer={
@@ -434,7 +412,7 @@ function BatchTestModal({ onClose }: { onClose: () => void }): ReactNode {
       }
     >
       <div className="stack">
-        <Field label={t('proxy.lines')} hint={t('proxy.lines.hint')}>
+        <Field label={t('proxy.lines')}>
           <textarea
             className="input mono"
             rows={6}
@@ -469,9 +447,6 @@ function BatchTestModal({ onClose }: { onClose: () => void }): ReactNode {
                 <Chip tone={working === rows.length ? 'muted' : 'err'}>
                   {t('proxy.failing').replace('{n}', String(rows.length - working))}
                 </Chip>
-                <span className="faint" style={{ fontSize: 12 }}>
-                  {t('proxy.paste.hint')}
-                </span>
               </div>
               <div className="rows">
                 {rows.map((row, index) => (
@@ -506,10 +481,12 @@ function ProxyEditor({
   entry,
   onClose,
   onSaved,
+  onChecked,
 }: {
   entry: ProxyEntry | null;
   onClose: () => void;
   onSaved: () => void;
+  onChecked: () => void;
 }): ReactNode {
   const { t } = useI18n();
   const toast = useToast();
@@ -521,6 +498,7 @@ function ProxyEditor({
   const [port, setPort] = useState(entry?.config.port ?? 8080);
   const [user, setUser] = useState(entry?.config.user ?? '');
   const [password, setPassword] = useState(entry?.password ?? '');
+  const [replacePassword, setReplacePassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState('');
@@ -570,7 +548,8 @@ function ProxyEditor({
     }
     setSaving(true);
     try {
-      await bridge().saveProxy({ id: entry?.id, name, note, password, config: config() });
+      const saved = await bridge().saveProxy({ id: entry?.id, name, note, password, replacePassword, config: config() });
+      if (!entry) void bridge().testProxyEntry(saved.id).then(() => onChecked()).catch(() => undefined);
       toast.success(t('btn.save'), name || `${host}:${port}`);
       onSaved();
     } catch (error) {
@@ -615,8 +594,22 @@ function ProxyEditor({
             />
           </Field>
 
-          <Field label={t('ed.host')}>
-            <input className="input mono" value={host} onChange={(event) => setHost(event.target.value)} placeholder="gate.example.com" spellCheck={false} />
+          <Field label={t('ed.host')} hint="Paste a proxy with Ctrl+B or Ctrl+V">
+            <input className="input mono" value={host} onChange={(event) => setHost(event.target.value)} onKeyDown={(event) => {
+              if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'b') return;
+              event.preventDefault(); event.stopPropagation();
+              void bridge().proxyClipboard().then((parsed) => {
+                if (!parsed) { toast.warn('Invalid proxy', 'Use host:port or host:port:user:password.'); return; }
+                setType(parsed.type ?? 'http'); setHost(parsed.host ?? ''); setPort(parsed.port ?? 0);
+                setUser(parsed.user ?? ''); setPassword(parsed.password ?? ''); setReplacePassword(true);
+              }).catch((error: unknown) => toast.error('Clipboard', messageOf(error)));
+            }} onPaste={(event) => {
+              const parsed = parseProxyLine(event.clipboardData.getData('text'));
+              if (!parsed) return;
+              event.preventDefault();
+              setType(parsed.type ?? 'http'); setHost(parsed.host ?? ''); setPort(parsed.port ?? 0);
+              setUser(parsed.user ?? ''); setPassword(parsed.password ?? ''); setReplacePassword(true);
+            }} placeholder="gate.example.com" spellCheck={false} />
           </Field>
 
           <Field label={t('ed.port')}>
@@ -627,11 +620,11 @@ function ProxyEditor({
             <input className="input mono" value={user} onChange={(event) => setUser(event.target.value)} autoComplete="off" spellCheck={false} />
           </Field>
 
-          <Field label={t('ed.pass')} hint={t('proxy.password.hint')}>
-            <input className="input mono" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
+          <Field label={t('ed.pass')}>
+            <input className="input mono" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setReplacePassword(true); }} autoComplete="new-password" />
           </Field>
 
-          <Field label={t('proxy.note')} hint={t('proxy.note.hint')} span={2}>
+          <Field label={t('proxy.note')} span={2}>
             <input className="input" value={note} onChange={(event) => setNote(event.target.value)} />
           </Field>
         </div>
@@ -651,7 +644,6 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
   return (
     <Modal
       title={t('proxy.import.title')}
-      subtitle={t('proxy.import.hint')}
       onClose={onClose}
       footer={
         <>
@@ -669,7 +661,7 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
                 const result = await bridge().importProxyList(text);
                 toast.success(t('proxy.import.added').replace('{n}', String(result.added)));
                 if (result.failed.length > 0) {
-                  toast.warn(t('proxy.import.failed').replace('{n}', String(result.failed.length)), result.failed.slice(0, 4).join(', '));
+                  toast.warn(t('proxy.import.failed').replace('{n}', String(result.failed.length)));
                 }
                 onImported();
               } catch (error) {
@@ -684,14 +676,14 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
         </>
       }
     >
-      <textarea
+      <><p className="hint" style={{ marginBottom: 8 }}>One proxy per line</p><textarea
         className="textarea mono"
         rows={12}
         value={text}
         onChange={(event) => setText(event.target.value)}
         placeholder={'gate.example.com:8080:user:password\n1.2.3.4:1080\nuser:pass@5.6.7.8:3128'}
         spellCheck={false}
-      />
+      /></>
     </Modal>
   );
 }

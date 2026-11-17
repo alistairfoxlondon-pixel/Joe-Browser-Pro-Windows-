@@ -10,20 +10,20 @@ import { CdpClient, delay } from './cdp';
 import { buildFingerprintScript } from './inject';
 import { openTunnel, proxyEnabled, upstreamOf, type Upstream } from './proxy';
 import { startRelay, type RelayHandle } from './relay';
-import { proxyPasswordOf, findProfile, getSettings } from './store';
-import { installFirefoxExtensions } from './extensions';
-import { loadArgs, profileExtensionFolders } from './library';
+import { proxyPasswordOf, getSettings } from './store';
+import { ensureShipped, loadArgs, profileExtensionFolders } from './library';
 import { log } from './log';
 import { testProxy } from './proxy';
+import { ProxyWatchState } from './proxyWatch';
 import * as history from './history';
-import { resolveKernelExe, detectInstalledBrowsers } from './catalog';
+import { resolveKernelExe, installedKernels, compareVersions } from './catalog';
 import { buildIdentity } from './ua';
 
 /**
  * Launching a profile.
  *
  * The order matters and is deliberate:
- *   1. Resolve a real browser binary - a pinned kernel, or one already on the PC.
+ *   1. Resolve an app-managed browser binary for the selected engine.
  *   2. Start the relay if the profile has an authenticated proxy.
  *   3. Spawn the browser with its own user-data-dir, so cookies and storage are its own.
  *   4. Attach over CDP and stamp every new target *before* it runs, then release it.
@@ -34,7 +34,7 @@ import { buildIdentity } from './ua';
  */
 
 export interface SessionOptions {
-  onToast?: (message: string, detail: string) => void;
+  onToast?: (message: string, detail: string, nativeOnly?: boolean) => void;
 }
 
 export class BrowserSession extends EventEmitter {
@@ -48,16 +48,13 @@ export class BrowserSession extends EventEmitter {
   private stamped = new Set<string>();
   private closing = false;
   private watchTimer: NodeJS.Timeout | null = null;
-  private lastExitIp = '';
-  private watchFails = 0;
-  private watchDown = false;
   private debugPort = 0;
   private dataDir: string;
   private readonly options: SessionOptions;
 
   constructor(
     profile: Profile,
-    exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string }>,
+    exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }>,
     options: SessionOptions = {},
   ) {
     super();
@@ -80,7 +77,7 @@ export class BrowserSession extends EventEmitter {
     };
   }
 
-  private readonly exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string }>;
+  private readonly exeFor: (profile: Profile) => Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }>;
 
   get running(): boolean {
     return this.child !== null && this.info.state !== 'stopped' && this.info.state !== 'failed';
@@ -95,7 +92,7 @@ export class BrowserSession extends EventEmitter {
 
     const identity = buildIdentity(
       engine,
-      target.version || profile.browserVersion,
+      target.runtimeVersion || target.version || profile.browserVersion,
       profile.fingerprint,
       profile.fingerprint.seed,
     );
@@ -133,6 +130,7 @@ export class BrowserSession extends EventEmitter {
         }
         await this.relay.close();
         this.relay = null;
+        this.info.proxyFellBack = true;
         proxyArg = '';
       }
     }
@@ -146,6 +144,12 @@ export class BrowserSession extends EventEmitter {
     // store build that could not be fetched never leaves the tools missing.
     const settings = getSettings();
     const masterEnabled = settings.extensionsEnabled;
+    if (!isFirefox && masterEnabled && settings.customExtensionsEnabled) {
+      try { await ensureShipped(); }
+      catch (error) {
+        this.emit('notice', { kind: 'warn', message: 'Some default extensions could not be installed', detail: error instanceof Error ? error.message : String(error) });
+      }
+    }
     const extensions = isFirefox
       ? []
       : profileExtensionFolders(profile, masterEnabled, settings.customExtensionsEnabled);
@@ -156,13 +160,16 @@ export class BrowserSession extends EventEmitter {
 
     if (isFirefox) {
       this.writeFirefoxPrefs(profile, identity.userAgent, proxyArg);
-      if (masterEnabled) installFirefoxExtensions(this.dataDir);
+      // Remove only our obsolete sideloads; the built-in Chromium tool does not use extensions.
+      for (const id of ['joe-paste-as-human@joebrowser.local', 'joe-right-click@joebrowser.local', 'joe-tracker-plus@joebrowser.local']) {
+        try { fs.rmSync(path.join(this.dataDir, 'extensions', id), { recursive: true, force: true }); } catch { /* retry on the next launch */ }
+      }
     }
 
     this.injectScript = buildFingerprintScript({
       fingerprint: profile.fingerprint,
       engine,
-      browserVersion: target.version || profile.browserVersion,
+      browserVersion: target.runtimeVersion || target.version || profile.browserVersion,
       tools: profile.tools,
       countryCode: profile.proxy.lastCountryCode,
     });
@@ -301,7 +308,36 @@ export class BrowserSession extends EventEmitter {
 
   private async attachCDP(engine: string): Promise<void> {
     try {
-      this.cdp = await CdpClient.connect(this.debugPort, 30000);
+      const connection = await CdpClient.connect(this.debugPort, 30000);
+      if (this.closing) { connection.close(); return; }
+      this.cdp = connection;
+      const autoAttached = new Set<string>();
+
+      // Every document request in this profile is one history entry. Network.requestWillBeSent
+      // fires before the request leaves, so a navigation that is later blocked still appears.
+      this.cdp.on('Network.requestWillBeSent', (params) => {
+        const type = String(params['type'] ?? '');
+        const request = params['request'] as { url?: string } | undefined;
+        if (type === 'Document' && request?.url) {
+          const redirect = params['redirectResponse'] as { url?: string } | undefined;
+          if (redirect?.url) history.markRedirect(this.profileId, redirect.url);
+          history.record(this.profileId, request.url);
+        }
+      });
+      this.cdp.on('Page.navigatedWithinDocument', (params) => {
+        if (typeof params['url'] === 'string') history.record(this.profileId, params['url']);
+      });
+      this.cdp.on('Target.targetInfoChanged', (params) => {
+        const target = params['targetInfo'] as { type?: string; url?: string; title?: string } | undefined;
+        if (target?.type === 'page' && target.url && target.title) history.attachTitle(this.profileId, target.url, target.title);
+      });
+
+      this.cdp.on('Target.attachedToTarget', (params, _sessionId) => {
+        const sessionId = String(params['sessionId'] ?? '');
+        const targetInfo = (params['targetInfo'] as { type?: string; targetId?: string } | undefined) ?? {};
+        if (targetInfo.targetId) autoAttached.add(targetInfo.targetId);
+        void this.stampTarget(sessionId, targetInfo.type ?? 'page', engine);
+      });
 
       // Pause every new target until it has been stamped.
       await this.cdp.send('Target.setDiscoverTargets', { discover: true }).catch(() => undefined);
@@ -312,29 +348,13 @@ export class BrowserSession extends EventEmitter {
         filter: [{ type: 'page' }, { type: 'iframe' }, { type: 'worker' }],
       });
 
-      // Every document request in this profile is one history entry. Network.requestWillBeSent
-      // fires before the request leaves, so a navigation that is later blocked still appears.
-      this.cdp.on('Network.requestWillBeSent', (params) => {
-        const type = String(params['type'] ?? '');
-        const request = params['request'] as { url?: string } | undefined;
-        if (type === 'Document' && request?.url) {
-          history.record(this.profileId, request.url);
-        }
-      });
-
-      this.cdp.on('Target.attachedToTarget', (params, _sessionId) => {
-        const sessionId = String(params['sessionId'] ?? '');
-        const targetInfo = (params['targetInfo'] as { type?: string; targetId?: string } | undefined) ?? {};
-        void this.stampTarget(sessionId, targetInfo.type ?? 'page', engine);
-      });
-
       // Targets that existed before auto-attach was switched on still need the script.
       const existing = await this.cdp
         .send<{ targetInfos?: { targetId: string; type: string }[] }>('Target.getTargets')
         .catch(() => ({ targetInfos: [] }));
 
       for (const target of existing.targetInfos ?? []) {
-        if (target.type !== 'page') continue;
+        if (target.type !== 'page' || autoAttached.has(target.targetId)) continue;
         try {
           const attached = await this.cdp.send<{ sessionId: string }>('Target.attachToTarget', {
             targetId: target.targetId,
@@ -411,61 +431,28 @@ export class BrowserSession extends EventEmitter {
    * nobody reads.
    */
   private startProxyWatch(profile: Profile): void {
-    if (!profile.tools.proxyWatch || !proxyEnabled(profile.proxy)) return;
+    if (!profile.tools.proxyWatch || !proxyEnabled(profile.proxy) || this.info.proxyFellBack) return;
 
     const intervalMs = Math.min(600, Math.max(30, profile.tools.proxyWatchInterval)) * 1000;
     const password = proxyPasswordOf(profile);
     const config = profile.proxy;
     let busy = false;
-
+    const state = new ProxyWatchState(profile.name);
+    const failure = (detail: string) => {
+      const notice = state.failure(detail);
+      if (notice && !this.closing) this.emit('notice', notice);
+    };
     this.watchTimer = setInterval(() => {
       if (busy || this.closing) return;
       busy = true;
-      void testProxy(config, password, 15000)
-        .then((result) => {
-          if (this.closing) return;
-
-          if (!result.ok) {
-            this.watchFails++;
-            if (this.watchFails >= 2 && !this.watchDown) {
-              this.watchDown = true;
-              this.emit('notice', {
-                kind: 'warn' as const,
-                message: `The proxy for ${profile.name} stopped answering`,
-                detail: result.error,
-              });
-            }
-            return;
-          }
-
-          this.watchFails = 0;
-          if (this.watchDown) {
-            this.watchDown = false;
-            this.emit('notice', {
-              kind: 'success' as const,
-              message: `The proxy for ${profile.name} is answering again`,
-              detail: `${result.ip} · ${result.city || result.country}`,
-            });
-          }
-
-          if (!this.lastExitIp) {
-            this.lastExitIp = result.ip;
-          } else if (result.ip && result.ip !== this.lastExitIp) {
-            // A rotated exit is the one change worth interrupting the user for.
-            this.emit('notice', {
-              kind: 'info' as const,
-              message: `The exit address for ${profile.name} changed`,
-              detail: `${this.lastExitIp} → ${result.ip}`,
-            });
-            this.lastExitIp = result.ip;
-          }
-
-          this.info.exitIp = result.ip;
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          busy = false;
-        });
+      void testProxy(config, password, 15000).then((result) => {
+        if (this.closing) return;
+        if (!result.ok) { failure(result.error); return; }
+        for (const notice of state.success(result.ip, result.city || result.country)) this.emit('notice', notice);
+        this.info.exitIp = result.ip;
+      }).catch((error: unknown) => {
+        failure(error instanceof Error ? error.message : String(error));
+      }).finally(() => { busy = false; });
     }, intervalMs);
 
     // A timer must never be the reason the app cannot quit.
@@ -494,15 +481,12 @@ export class BrowserSession extends EventEmitter {
 
   async clearStorage(scope: 'cache' | 'cookies' | 'siteData'): Promise<boolean> {
     if (!this.cdp) return false;
+    // CDP has no browser-wide "clear all site data" command: clearing the current
+    // origin would leave other origins behind. Ask the user to close the profile instead.
+    if (scope === 'siteData') return false;
     try {
-      // The browser-wide commands are the honest ones for a live profile: they go through the
-      // browser's own storage layer rather than deleting files under an open handle.
-      await this.cdp.send('Storage.clearDataForOrigin', { origin: '', storageTypes: 'all' }).catch(() => undefined);
-      const types =
-        scope === 'cookies' ? 'cookies' : scope === 'cache' ? 'cache_storage,local_storage' : 'all';
-      await this.cdp.send('Network.clearBrowserCache').catch(() => undefined);
-      await this.cdp.send('Network.clearBrowserCookies').catch(() => undefined);
-      void types;
+      const page = await this.primaryPageSession();
+      await this.cdp.send(scope === 'cache' ? 'Network.clearBrowserCache' : 'Network.clearBrowserCookies', {}, page);
       return true;
     } catch {
       return false;
@@ -695,13 +679,14 @@ export class BrowserSession extends EventEmitter {
       /* the socket is often already gone by the time close is called */
     }
 
-    if (this.child && this.child.exitCode === null) {
+    const child = this.child;
+    if (child && child.exitCode === null && child.signalCode === null) {
       // Give the browser a moment to shut down cleanly so its storage is not left mid-write.
       const deadline = Date.now() + 4000;
-      while (this.child.exitCode === null && Date.now() < deadline) await delay(120);
-      if (this.child.exitCode === null) {
+      while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await delay(120);
+      if (child.exitCode === null && child.signalCode === null) {
         try {
-          this.child.kill();
+          child.kill();
         } catch {
           /* already gone */
         }
@@ -786,9 +771,10 @@ export class SessionManager {
     this.sessions.set(profile.id, session);
 
     session.on('changed', (info: SessionInfo) => this.events.emit('changed', info));
-    session.on('notice', (notice: { kind: string; message: string; detail: string }) =>
-      this.events.emit('notice', notice),
-    );
+    session.on('notice', (notice: { kind: string; message: string; detail: string }) => {
+      this.events.emit('notice', notice);
+      this.options.onToast?.(notice.message, notice.detail, true);
+    });
     session.on('closed', (profileId: string) => {
       this.sessions.delete(profileId);
       this.events.emit('closed', profileId);
@@ -827,31 +813,19 @@ export class SessionManager {
   }
 }
 
-/** A pinned kernel if the profile has one, otherwise the newest matching browser on the PC. */
-async function resolveExecutable(profile: Profile): Promise<{ exe: string; engine: string; version: string }> {
+/** Resolve only app-managed builds; never silently substitute an installed system browser. */
+async function resolveExecutable(profile: Profile): Promise<{ exe: string; engine: string; version: string; runtimeVersion?: string }> {
   if (profile.kernelId) {
-    const exe = resolveKernelExe(profile.kernelId);
-    if (exe) {
-      const version = profile.kernelId.split('-')[1] ?? profile.browserVersion;
-      return { exe, engine: profile.engine, version };
-    }
-    throw new Error(
-      `This profile is pinned to a build that is not installed (${profile.kernelId}). ` +
-        'Install it from the Browsers page, or pin the profile to a build you have.',
-    );
+    const build = installedKernels().find((item) => item.id === profile.kernelId && item.engine === profile.engine);
+    const exe = build && resolveKernelExe(build.id);
+    if (build && exe) return { exe, engine: build.engine, version: build.version, runtimeVersion: build.runtimeVersion };
+    throw new Error(`The selected ${profile.engine} build is not installed. Install it from the Browsers page.`);
   }
-
-  const profileAgain = findProfile(profile.id);
-  const preferred = profileAgain?.engine ?? 'chrome';
-  const detected = await detectInstalledBrowsers();
-  const exact = detected.find((b) => b.engine === preferred);
-  const fallback = exact ?? detected.find((b) => b.engine === 'chrome' || b.engine === 'chromium') ?? detected[0];
-
-  if (!fallback) {
-    throw new Error(
-      'No browser was found on this PC. Install one from the Browsers page, or install Chrome and try again.',
-    );
+  const builds = installedKernels().filter((item) => item.engine === profile.engine)
+    .sort((a, b) => compareVersions(b.version, a.version));
+  for (const build of builds) {
+    const exe = resolveKernelExe(build.id);
+    if (exe) return { exe, engine: build.engine, version: build.version, runtimeVersion: build.runtimeVersion };
   }
-
-  return { exe: fallback.path, engine: fallback.engine, version: fallback.version };
+  throw new Error(`No app-managed ${profile.engine} build is installed. Install one from the Browsers page.`);
 }

@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -41,10 +42,11 @@ export function SubscriptionProvider({ user, children }: { user: CloudUser | nul
   const [entitlement, setEntitlement] = useState<CloudEntitlement | null>(null);
   const [loading, setLoading] = useState(true);
   const [unreachable, setUnreachable] = useState(false);
+  const requestSequence = useRef(0);
 
   const refresh = useCallback(async () => {
-    // A window with no account has nothing to ask the server about: local mode is the free plan,
-    // and an RPC with no JWT would only spend a round trip to be told so.
+    const sequence = ++requestSequence.current;
+    // No account means there is no subscription to query.
     if (!user) {
       setEntitlement(null);
       setUnreachable(false);
@@ -53,20 +55,24 @@ export function SubscriptionProvider({ user, children }: { user: CloudUser | nul
     }
     try {
       const next = await cloud().myEntitlement();
+      if (sequence !== requestSequence.current) return null;
       setEntitlement(next);
       setUnreachable(false);
       return next;
     } catch {
+      if (sequence !== requestSequence.current) return null;
+      setEntitlement(null);
       setUnreachable(true);
       return null;
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }, [user]);
 
   useEffect(() => {
     setLoading(true);
     void refresh();
+    return () => { requestSequence.current += 1; };
   }, [refresh, user?.id]);
 
   useEffect(() => {
@@ -74,10 +80,12 @@ export function SubscriptionProvider({ user, children }: { user: CloudUser | nul
       void refresh();
     };
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    const timer = window.setInterval(onFocus, 60_000);
+    return () => { window.removeEventListener('focus', onFocus); window.clearInterval(timer); };
   }, [refresh]);
 
   const signOut = useCallback(async () => {
+    requestSequence.current += 1;
     await cloud().signOut();
     setEntitlement(null);
   }, []);

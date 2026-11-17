@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import type { DetectedBrowser, InstalledKernel, KernelBuild } from '../../shared/types';
 import { Paths } from './paths';
@@ -11,7 +12,7 @@ import { readJson, writeJson } from './atomic';
  * The browser kernel catalog.
  *
  * Joe Browser does not ship a browser; it manages real published builds. The list comes from
- * the vendors' own metadata (Chrome for Testing for Chromium and Chrome, Mozilla product
+ * the vendors' own metadata (Chrome for Testing and Mozilla product
  * details for Firefox) and is cached on disk, so the Browsers page opens instantly and a
  * machine that is briefly offline still shows what it saw last.
  *
@@ -21,6 +22,7 @@ import { readJson, writeJson } from './atomic';
 
 const CFT_KNOWN_GOOD = 'https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json';
 const CFT_LAST_KNOWN = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json';
+const BRAVE_RELEASES = 'https://api.github.com/repos/brave/brave-browser/releases?per_page=100';
 const MOZILLA_VERSIONS = 'https://product-details.mozilla.org/1.0/firefox_versions.json';
 
 const CACHE_FILE = () => Paths.storeFile('catalog.json');
@@ -30,6 +32,7 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAJORS_TO_KEEP = 8;
 
 interface CacheShape {
+  schemaVersion?: number;
   fetchedAt: number;
   builds: KernelBuild[];
 }
@@ -88,7 +91,7 @@ function channelOf(version: string, channels: Record<string, string>): string {
   for (const [name, value] of Object.entries(channels)) {
     if (value === version) return name;
   }
-  return 'stable';
+  return 'known-good';
 }
 
 async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
@@ -120,16 +123,16 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
       }
     }
   } catch {
-    /* the known-good list below still gives the stable history */
+    /* known-good versions below remain available without channel claims */
   }
 
   const known = await httpsJson<CftShape>(CFT_KNOWN_GOOD);
-  const stable = (known.versions ?? []).filter((entry) => entry.downloads?.chrome || entry.downloads?.chromium);
+  const knownGood = (known.versions ?? []).filter((entry) => entry.downloads?.chrome || entry.downloads?.chromium);
 
   // Keep the newest build of each major, newest first, so the page is eight rows rather than
   // several hundred point releases.
   const byMajor = new Map<string, CftVersionEntry>();
-  for (const entry of stable) {
+  for (const entry of knownGood) {
     const major = entry.version.split('.')[0] ?? '';
     const current = byMajor.get(major);
     if (!current || compareVersions(entry.version, current.version) > 0) {
@@ -166,6 +169,9 @@ async function fetchChromiumBuilds(): Promise<KernelBuild[]> {
 }
 
 async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
+  // Mozilla's stable Windows releases are installers, not ZIP archives; macOS releases
+  // are DMGs. Neither format is supported by our extraction pipeline.
+  if (process.platform !== 'linux') return [];
   const suffix = platformSuffix();
   const details = await httpsJson<Record<string, string>>(MOZILLA_VERSIONS);
   const versions: { channel: string; version: string }[] = [];
@@ -173,18 +179,14 @@ async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
   for (const [key, channel] of [
     ['LATEST_FIREFOX_VERSION', 'stable'],
     ['FIREFOX_ESR', 'esr'],
-    ['LATEST_FIREFOX_DEVEL_VERSION', 'dev'],
   ] as const) {
     const version = details[key];
     if (version && !version.includes('b') && !version.includes('a')) {
       versions.push({ channel, version });
-    } else if (version) {
-      versions.push({ channel, version: version.replace(/[ab]\d+$/, '') });
     }
   }
 
   return versions.map(({ channel, version }) => {
-    const folder = process.platform === 'win32' ? 'win64' : process.platform === 'darwin' ? 'mac' : 'linux-x86_64';
     return {
       id: buildId('firefox', version, channel),
       engine: 'firefox',
@@ -192,13 +194,54 @@ async function fetchFirefoxBuilds(): Promise<KernelBuild[]> {
       version,
       os: suffix,
       downloadUrl:
-        `https://archive.mozilla.org/pub/firefox/releases/${version}/${folder}/en-US/` +
-        (process.platform === 'win32' ? `firefox-${version}.zip` : `firefox-${version}.tar.bz2`),
+        `https://archive.mozilla.org/pub/firefox/releases/${version}/linux-x86_64/en-US/firefox-${version}.tar.bz2`,
       installed: false,
       path: '',
       sizeBytes: 0,
     };
   });
+}
+
+interface BraveRelease {
+  draft?: boolean;
+  prerelease?: boolean;
+  name?: string;
+  tag_name?: string;
+  assets?: { name?: string; browser_download_url?: string; size?: number; digest?: string }[];
+}
+
+/** Parse only vendor releases with a matching Windows archive and GitHub-provided digest. */
+export function braveBuildsFromReleases(releases: BraveRelease[]): KernelBuild[] {
+  const builds: KernelBuild[] = [];
+  const counts: Record<string, number> = { stable: 0, beta: 0, nightly: 0 };
+  for (const release of releases) {
+    if (release.draft || typeof release.name !== 'string' || typeof release.tag_name !== 'string') continue;
+    const match = /^(Release|Beta|Nightly) v(\d+\.\d+\.\d+) \(Chromium (\d+\.\d+\.\d+\.\d+)\)/i.exec(release.name.trim());
+    if (!match || release.tag_name !== `v${match[2]}`) continue;
+    const channel = match[1]!.toLowerCase() === 'release' ? 'stable' : match[1]!.toLowerCase();
+    // Brave can publish release-channel candidates as GitHub prereleases before shipping.
+    if (channel === 'stable' && release.prerelease) continue;
+    if ((counts[channel] ?? 0) >= (channel === 'stable' ? 4 : 2)) continue;
+    const fileName = `brave-v${match[2]}-win32-x64.zip`;
+    const expectedUrl = `https://github.com/brave/brave-browser/releases/download/${release.tag_name}/${fileName}`;
+    const asset = release.assets?.find((item) => item.name === fileName && item.browser_download_url === expectedUrl);
+    const digest = /^sha256:([a-f0-9]{64})$/i.exec(asset?.digest ?? '');
+    if (!asset || !digest || !Number.isSafeInteger(asset.size) || (asset.size ?? 0) <= 0) continue;
+    builds.push({
+      id: buildId('brave', match[2]!, channel), engine: 'brave', channel,
+      version: match[2]!, runtimeVersion: match[3]!, sha256: digest[1]!.toLowerCase(),
+      os: 'win64', downloadUrl: expectedUrl, sizeBytes: asset.size!, installed: false, path: '',
+    });
+    counts[channel] = (counts[channel] ?? 0) + 1;
+  }
+  return builds;
+}
+
+async function fetchBraveBuilds(): Promise<KernelBuild[]> {
+  if (process.platform !== 'win32' || process.arch !== 'x64') return [];
+  const releases = await httpsJson<BraveRelease[]>(BRAVE_RELEASES);
+  if (!Array.isArray(releases)) throw new Error('Could not read Brave release metadata.');
+  return braveBuildsFromReleases(releases);
 }
 
 export function compareVersions(a: string, b: string): number {
@@ -211,6 +254,14 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/** Kernel IDs are directory names, never paths supplied by a renderer. */
+function kernelDirectory(id: string): string {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(id) || id === '.' || id === '..') {
+    throw new Error('Invalid browser build ID.');
+  }
+  return path.join(Paths.kernels, id);
+}
+
 function installedIndex(): Map<string, InstalledKernel> {
   const dir = Paths.kernels;
   const map = new Map<string, InstalledKernel>();
@@ -221,7 +272,9 @@ function installedIndex(): Map<string, InstalledKernel> {
     const metaFile = path.join(dir, entry.name, 'kernel.json');
     if (!fs.existsSync(metaFile)) continue;
     const meta = readJson<InstalledKernel | null>(metaFile, null);
-    if (meta) map.set(meta.id, meta);
+    if (meta && meta.id === entry.name) {
+      try { if (resolveKernelExe(meta.id)) map.set(meta.id, meta); } catch { /* Ignore malformed metadata. */ }
+    }
   }
   return map;
 }
@@ -233,21 +286,28 @@ export function installedKernels(): InstalledKernel[] {
 
 export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> {
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
-  const fresh = Date.now() - cache.fetchedAt < CACHE_TTL_MS;
+  const fresh = cache.schemaVersion === 2 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
 
-  let builds = cache.builds;
+  // Discard legacy entries with a fabricated archive URL, including old cached results.
+  let builds = cache.builds.filter((build) =>
+    (build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev')) &&
+    (cache.schemaVersion === 2 || build.engine !== 'brave'),
+  );
+  const installed = installedIndex();
 
   if (!fresh || forceRefresh || builds.length === 0) {
     const gathered: KernelBuild[] = [];
-    const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds()]);
-    for (const result of results) {
+    const results = await Promise.allSettled([fetchChromiumBuilds(), fetchFirefoxBuilds(), fetchBraveBuilds()]);
+    const sourceEngines = [['chrome', 'chromium'], ['firefox'], ['brave']];
+    results.forEach((result, index) => {
       if (result.status === 'fulfilled') gathered.push(...result.value);
-    }
+      else gathered.push(...builds.filter((build) => sourceEngines[index]?.includes(build.engine)));
+    });
 
     if (gathered.length > 0) {
       builds = gathered;
-      writeJson(CACHE_FILE(), { fetchedAt: Date.now(), builds } satisfies CacheShape);
-    } else if (builds.length === 0) {
+      writeJson(CACHE_FILE(), { schemaVersion: 2, fetchedAt: Date.now(), builds } satisfies CacheShape);
+    } else if (builds.length === 0 && installed.size === 0) {
       throw new Error(
         'The browser catalog could not be reached. Check the connection and try again - ' +
           'existing installations still work.',
@@ -255,44 +315,38 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
     }
   }
 
-  const installed = installedIndex();
+  // Previously installed versions remain selectable and removable after vendor catalogs rotate.
+  const catalogIds = new Set(builds.map((build) => build.id));
+  for (const local of installed.values()) {
+    if (!catalogIds.has(local.id)) {
+      builds = [...builds, {
+        id: local.id, engine: local.engine, version: local.version,
+        channel: 'installed', os: platformSuffix(), downloadUrl: '',
+        installed: true, path: local.exePath, sizeBytes: 0,
+      }];
+    }
+  }
   return builds
     .map((build) => {
       const local = installed.get(build.id);
       return local
-        ? { ...build, installed: true, path: local.exePath, sizeBytes: fs.existsSync(local.path) ? dirSize(local.path) : 0 }
-        : { ...build, installed: false, path: '', sizeBytes: 0 };
+        ? { ...build, installed: true, path: local.exePath }
+        : { ...build, installed: false, path: '' };
     })
     .sort((a, b) => b.engine.localeCompare(a.engine) || compareVersions(b.version, a.version));
-}
-
-function dirSize(dir: string): number {
-  let total = 0;
-  try {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      try {
-        total += entry.isDirectory() ? dirSize(full) : fs.statSync(full).size;
-      } catch {
-        /* a locked file still counts as zero rather than failing the listing */
-      }
-    }
-  } catch {
-    /* an unreadable folder reports zero */
-  }
-  return total;
 }
 
 export async function downloadKernel(
   build: KernelBuild,
   onProgress: (received: number, total: number) => void,
 ): Promise<InstalledKernel> {
-  const targetDir = path.join(Paths.kernels, build.id);
+  const targetDir = kernelDirectory(build.id);
   if (fs.existsSync(targetDir)) {
     const existing = readJson<InstalledKernel | null>(path.join(targetDir, 'kernel.json'), null);
     if (existing) return existing;
   }
 
+  if (fs.existsSync(targetDir)) throw new Error('The browser build folder already exists but is invalid. Remove it before reinstalling.');
   if (!build.downloadUrl) throw new Error('This build has no download address.');
   if (!build.downloadUrl.startsWith('https://')) {
     throw new Error('Refusing to download a build over a connection that is not HTTPS.');
@@ -302,41 +356,39 @@ export async function downloadKernel(
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'joe-kernel-'));
   const archivePath = path.join(tempDir, archiveNameFor(build));
 
-  await downloadFile(build.downloadUrl, archivePath, onProgress);
-
-  const staging = `${targetDir}.staging-${Date.now()}`;
-  fs.mkdirSync(staging, { recursive: true });
-  await extract(archivePath, staging);
-
-  // The vendor archives wrap everything in one folder; lift the launcher's folder up so the
-  // install path is predictable regardless of vendor.
-  const exePath = locateLauncher(staging, build.engine);
-  if (!exePath) {
+  const staging = `${targetDir}.staging-${crypto.randomUUID()}`;
+  try {
+    if (build.engine === 'brave' && !/^[a-f0-9]{64}$/i.test(build.sha256 ?? '')) {
+      throw new Error('Brave release integrity information is missing. Refresh the browser catalog.');
+    }
+    await downloadFile(build.downloadUrl, archivePath, onProgress);
+    if (build.sha256) await verifyArchiveSha256(archivePath, build.sha256);
+    fs.mkdirSync(staging, { recursive: true });
+    await extract(archivePath, staging);
+    const exePath = locateLauncher(staging, build.engine);
+    if (!exePath) throw new Error('The downloaded archive did not contain a browser launcher.');
+    const meta: InstalledKernel = {
+      id: build.id, engine: build.engine, version: build.version,
+      path: targetDir, exePath: path.join(targetDir, path.relative(staging, exePath)),
+      runtimeVersion: build.runtimeVersion, installedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(path.join(staging, 'kernel.json'), JSON.stringify(meta, null, 2), 'utf8');
+    // Do not delete a competing install. A second download can be safely retried.
+    if (fs.existsSync(targetDir)) throw new Error('This browser build was installed by another request.');
+    fs.renameSync(staging, targetDir);
+    return meta;
+  } finally {
     fs.rmSync(staging, { recursive: true, force: true });
-    throw new Error('The downloaded archive did not contain a browser launcher.');
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
+}
 
-  const meta: InstalledKernel = {
-    id: build.id,
-    engine: build.engine,
-    version: build.version,
-    path: path.dirname(exePath),
-    exePath,
-    installedAt: new Date().toISOString(),
-  };
-
-  fs.writeFileSync(path.join(staging, 'kernel.json'), JSON.stringify(meta, null, 2), 'utf8');
-  fs.rmSync(targetDir, { recursive: true, force: true });
-  fs.renameSync(staging, targetDir);
-  fs.rmSync(tempDir, { recursive: true, force: true });
-
-  // The metadata sits beside the install; rewrite it with the final path rather than the staging
-  // path so a moved install is still found.
-  meta.path = targetDir;
-  meta.exePath = path.join(targetDir, path.relative(staging, exePath));
-  writeJson(path.join(targetDir, 'kernel.json'), meta);
-
-  return meta;
+export async function verifyArchiveSha256(file: string, expected: string): Promise<void> {
+  if (!/^[a-f0-9]{64}$/i.test(expected)) throw new Error('Invalid archive integrity information.');
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  const actual = hash.digest('hex');
+  if (actual !== expected.toLowerCase()) throw new Error('The browser archive failed its SHA-256 integrity check.');
 }
 
 function archiveNameFor(build: KernelBuild): string {
@@ -360,7 +412,12 @@ function downloadFile(
           reject(new Error('The download redirected too many times.'));
           return;
         }
-        resolve(downloadFile(response.headers.location, destination, onProgress, redirectsLeft - 1));
+        const next = new URL(response.headers.location, url);
+        if (next.protocol !== 'https:') {
+          reject(new Error('Refusing an insecure browser download redirect.'));
+          return;
+        }
+        resolve(downloadFile(next.href, destination, onProgress, redirectsLeft - 1));
         return;
       }
 
@@ -372,15 +429,24 @@ function downloadFile(
 
       const total = Number(response.headers['content-length'] ?? 0);
       let received = 0;
+      let lastProgress = 0;
       const file = fs.createWriteStream(destination);
 
       response.on('data', (chunk: Buffer) => {
         received += chunk.length;
-        onProgress(received, total);
+        const now = Date.now();
+        if (now - lastProgress >= 100 || (total > 0 && received === total)) {
+          lastProgress = now;
+          onProgress(received, total);
+        }
       });
       response.pipe(file);
 
-      file.on('finish', () => file.close(() => resolve()));
+      file.on('finish', () => file.close(() => {
+        if (total > 0 && received !== total) reject(new Error('The browser download was incomplete.'));
+        else resolve();
+      }));
+      response.on('aborted', () => { file.destroy(); reject(new Error('The browser download was interrupted.')); });
       file.on('error', (error) => {
         file.destroy();
         reject(error);
@@ -402,7 +468,9 @@ function extract(archive: string, into: string): Promise<void> {
       const command = isTar
         ? { file: 'tar', args: ['-xjf', archive, '-C', into] }
         : { file: 'tar', args: ['-xf', archive, '-C', into] };
-      execFile(command.file, command.args, { windowsHide: true }, (error, _stdout, stderr) => {
+      // Git for Windows also ships GNU tar; it treats C: paths as remote hosts. Use Windows' bsdtar.
+      const systemTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+      execFile(systemTar, command.args, { windowsHide: true }, (error, _stdout, stderr) => {
         if (error) reject(new Error(`Could not unpack the archive: ${stderr || error.message}`));
         else resolve();
       });
@@ -421,7 +489,9 @@ function extract(archive: string, into: string): Promise<void> {
 
 function locateLauncher(root: string, engine: string): string | null {
   const names =
-    engine === 'firefox'
+    engine === 'brave'
+      ? ['brave.exe']
+      : engine === 'firefox'
       ? ['firefox.exe', 'firefox']
       : engine === 'chromium'
         ? ['chrome.exe', 'chromium', 'Chromium']
@@ -451,19 +521,22 @@ function locateLauncher(root: string, engine: string): string | null {
 }
 
 export async function removeKernel(id: string): Promise<void> {
-  const dir = path.join(Paths.kernels, id);
-  if (!dir.startsWith(Paths.kernels)) throw new Error('Refusing to delete a folder outside the kernel store.');
+  const dir = kernelDirectory(id);
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
 export function resolveKernelExe(id: string): string | null {
-  const meta = readJson<InstalledKernel | null>(path.join(Paths.kernels, id, 'kernel.json'), null);
-  if (!meta) return null;
-  if (fs.existsSync(meta.exePath)) return meta.exePath;
-
-  // The install may have been moved; re-resolve inside its own folder before giving up.
-  const found = locateLauncher(path.join(Paths.kernels, id), meta.engine);
-  return found;
+  const dir = kernelDirectory(id);
+  const meta = readJson<InstalledKernel | null>(path.join(dir, 'kernel.json'), null);
+  if (!meta || meta.id !== id) return null;
+  // Never execute paths taken from metadata outside the managed build folder.
+  const candidate = path.resolve(meta.exePath || '');
+  if (candidate.startsWith(path.resolve(dir) + path.sep) && fs.existsSync(candidate)) {
+    const realDir = fs.realpathSync(dir);
+    const realCandidate = fs.realpathSync(candidate);
+    if (realCandidate.startsWith(realDir + path.sep) && fs.statSync(realCandidate).isFile()) return realCandidate;
+  }
+  return locateLauncher(dir, meta.engine);
 }
 
 /** Browsers already on this PC, so a profile can use one as it is. */

@@ -7,55 +7,21 @@ import { execFile } from 'node:child_process';
 import type { ExtensionItem, ExtensionReport, Profile } from '../../shared/types';
 import { Paths } from './paths';
 import { readJson, writeJson } from './atomic';
-import {
-  INSTALLED_DEFINITIONS,
-  ensureFirstPartyExtensions,
-  extensionArgs as firstPartyArgs,
-} from './extensions';
+import { extensionId, storeListingId, verifyStoreCrx } from './storeCrx';
+import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../../shared/extensionCatalog';
+import { ensureHumanPasteExtension } from './humanPaste';
 
 /**
- * The extension library.
- *
- * The port could only describe the three scripts it writes itself, so adding an extension a user
- * actually wanted was impossible. The original had a library: add one by store link, by `.crx`,
- * or by folder; enable, disable, delete; keep the two included extensions recoverable; and offer
- * a few recommendations as store *searches* rather than invented ids, because an id nobody
- * checked 404s.
- *
- * A store link cannot be fetched by the app with any confidence: the store serves a redirect
- * page, then a one-time signed URL, and a build that depends on that breaks when Google changes
- * it. So the link is unpacked by the browser itself when the user pastes one, and the app
- * validates what it is given. Where a direct `.crx` URL is supplied, the CRX header is stripped
- * and the ZIP is unpacked here - that part is stable and it is what every CRX downloader does.
+ * Local extension library. Store downloads use Google's update service and are accepted only
+ * after checking that the CRX3 publisher signature matches the requested extension ID.
+ * The included tools are local implementations, not the publishers' original extensions.
  */
 
 const LIBRARY_FILE = () => Paths.storeFile('extensions.json');
 const IMPORTED_ROOT = () => path.join(Paths.extensions, 'imported');
 const SHIPPED_ROOT = () => path.join(Paths.extensions, 'shipped');
 
-export const SHIPPED_IDS = {
-  tracker: 'joe-http-tracker-plus',
-  rightClick: 'joe-right-click-enable',
-} as const;
-
-const SHIPPED_DEFINITIONS: { id: string; name: string; description: string }[] = [
-  {
-    id: SHIPPED_IDS.tracker,
-    name: 'HTTP Tracker Plus',
-    description: 'See the redirect chain, status and hosts this tab requests.',
-  },
-  {
-    id: SHIPPED_IDS.rightClick,
-    name: 'Absolute Enable Right Click and Copy',
-    description: 'Restores the right-click menu, text selection and copy on sites that block them.',
-  },
-];
-
-const RECOMMENDED = [
-  { name: 'Ad Blocker', description: 'A clean, quiet browsing session without pop-ups.', query: 'uBlock%20Origin', icon: 'shield' },
-  { name: 'Google Translate', description: 'Translate pages inline without leaving the profile.', query: 'google%20translate', icon: 'translate' },
-  { name: 'Cookie Editor', description: 'Inspect and edit cookies for the running profile.', query: 'cookie%20editor', icon: 'cookie' },
-];
+export const SHIPPED_IDS = { tracker: INCLUDED_EXTENSIONS[0]!.id, rightClick: INCLUDED_EXTENSIONS[1]!.id };
 
 interface LibraryRow extends ExtensionItem {
   /** For an imported extension, the folder name inside `extensions/imported`. */
@@ -94,6 +60,7 @@ interface Manifest {
   name?: string;
   version?: string;
   description?: string;
+  default_locale?: string;
   icons?: Record<string, string>;
   action?: { default_icon?: Record<string, string> | string; default_title?: string };
   key?: string;
@@ -110,6 +77,19 @@ function readManifest(folder: string): Manifest | null {
   }
 }
 
+/** Chrome manifests can use __MSG_key__ placeholders resolved from their default locale. */
+function manifestText(folder: string, manifest: Manifest | null, value: string | undefined): string {
+  if (!value) return '';
+  const match = /^__MSG_([a-zA-Z0-9_@]+)__$/.exec(value);
+  const locale = manifest?.default_locale;
+  if (!match || !locale || !/^[a-zA-Z0-9_-]+$/.test(locale)) return value;
+  try {
+    const messages = JSON.parse(fs.readFileSync(path.join(folder, '_locales', locale, 'messages.json'), 'utf8')) as Record<string, { message?: string }>;
+    const key = Object.keys(messages).find((entry) => entry.toLowerCase() === match[1]!.toLowerCase());
+    return (key && messages[key]?.message) || value;
+  } catch { return value; }
+}
+
 /** The largest icon a package ships, as an absolute path, or '' when it ships none. */
 function iconOf(folder: string, manifest: Manifest | null): string {
   if (!manifest) return '';
@@ -124,9 +104,10 @@ function iconOf(folder: string, manifest: Manifest | null): string {
   candidates.sort((a, b) => Number(b.split(':')[0]) - Number(a.split(':')[0]));
   for (const candidate of candidates) {
     const file = candidate.split(':').slice(1).join(':');
-    const full = path.join(folder, file);
+    const full = path.resolve(folder, file);
+    const root = path.resolve(folder) + path.sep;
     try {
-      if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
+      if (full.startsWith(root) && fs.existsSync(full) && fs.statSync(full).isFile()) return full;
     } catch {
       /* keep looking */
     }
@@ -182,7 +163,7 @@ export function addFromFolder(sourceFolder: string): ExtensionItem {
     throw new Error('That folder is not an unpacked extension: it has no manifest.json.');
   }
   const manifest = readManifest(resolved);
-  const name = (manifest?.name ?? path.basename(resolved)).slice(0, 120);
+  const name = (manifestText(resolved, manifest, manifest?.name) || path.basename(resolved)).slice(0, 120);
   const folderName = freshFolderName(name);
   const target = path.join(IMPORTED_ROOT(), folderName);
 
@@ -193,7 +174,7 @@ export function addFromFolder(sourceFolder: string): ExtensionItem {
     id: crypto.randomUUID(),
     name,
     version: manifest?.version ?? '',
-    description: (manifest?.description ?? 'Unpacked extension').slice(0, 240),
+    description: (manifestText(target, manifest, manifest?.description) || 'Unpacked extension').slice(0, 240),
     folder: target,
     folderName,
     enabled: true,
@@ -230,14 +211,20 @@ function copyTree(from: string, to: string): void {
  * entries with unusual flags, and pulling a dependency for this would be more surface than the
  * feature is worth.
  */
-export function addFromCrxFile(file: string): ExtensionItem {
+export function addFromCrxFile(file: string, verified?: { publicKey: Buffer; storeUrl: string }): ExtensionItem {
+  if (fs.statSync(file).size > 64 * 1024 * 1024) throw new Error('The extension package exceeds 64 MB.');
   const data = fs.readFileSync(file);
   const zip = crxPayload(data);
   if (!zip) throw new Error('That file is not a Chrome extension package (.crx) or a .zip.');
 
   const folderName = freshFolderName(path.basename(file).replace(/\.(crx|zip)$/i, ''));
   const target = path.join(IMPORTED_ROOT(), folderName);
-  unzip(zip, target);
+  try {
+    unzip(zip, target);
+  } catch (error) {
+    fs.rmSync(target, { recursive: true, force: true });
+    throw error;
+  }
 
   const manifest = readManifest(target);
   if (!manifest) {
@@ -245,17 +232,30 @@ export function addFromCrxFile(file: string): ExtensionItem {
     throw new Error('The package has no manifest.json, so the browser would refuse it.');
   }
 
-  const name = (manifest.name ?? path.basename(file)).slice(0, 120);
+  if (verified) {
+    const expectedId = extensionId(verified.publicKey);
+    if (manifest.key && storeIdOf(manifest) !== expectedId) {
+      fs.rmSync(target, { recursive: true, force: true });
+      throw new Error('The manifest identity does not match the signed package.');
+    }
+    if (load().items.some((row) => row.storeId === expectedId)) {
+      fs.rmSync(target, { recursive: true, force: true });
+      throw new Error('This extension is already installed.');
+    }
+    manifest.key = verified.publicKey.toString('base64');
+    fs.writeFileSync(path.join(target, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  }
+  const name = (manifestText(target, manifest, manifest.name) || path.basename(file)).slice(0, 120);
   const item: LibraryRow = {
     id: crypto.randomUUID(),
     name,
     version: manifest.version ?? '',
-    description: (manifest.description ?? 'Imported extension').slice(0, 240),
+    description: (manifestText(target, manifest, manifest.description) || 'Imported extension').slice(0, 240),
     folder: target,
     folderName,
     enabled: true,
-    source: 'file',
-    storeUrl: '',
+    source: verified ? 'url' : 'file',
+    storeUrl: verified?.storeUrl ?? '',
     iconPath: iconOf(target, manifest),
     storeId: storeIdOf(manifest),
     shipped: false,
@@ -269,19 +269,19 @@ export function addFromCrxFile(file: string): ExtensionItem {
 }
 
 function crxPayload(data: Buffer): Buffer | null {
-  if (data.length > 4 && data.subarray(0, 4).toString('latin1') === 'Cr24') {
+  if (data.length >= 12 && data.subarray(0, 4).toString('latin1') === 'Cr24') {
     const version = data.readUInt32LE(4);
     let offset: number;
     if (version === 3) {
       // v3: magic(4) version(4) header_length(4) then the header, then the zip.
       const headerLength = data.readUInt32LE(8);
       offset = 12 + headerLength;
-    } else {
+    } else if (version === 2 && data.length >= 16) {
       // v2: magic(4) version(4) pubkey_length(4) sig_length(4) then key, sig, zip.
       const publicKeyLength = data.readUInt32LE(8);
       const signatureLength = data.readUInt32LE(12);
       offset = 16 + publicKeyLength + signatureLength;
-    }
+    } else return null;
     if (offset >= data.length) return null;
     return data.subarray(offset);
   }
@@ -290,59 +290,77 @@ function crxPayload(data: Buffer): Buffer | null {
   return null;
 }
 
-/** The smallest ZIP reader that matters: stored and deflated entries, central directory. */
+/** CRC-32 of an unpacked ZIP member. */
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** Extract a conventional ZIP with bounded sizes and strict path and integrity checks. */
 function unzip(buffer: Buffer, target: string): void {
+  const bad = () => new Error('The extension archive is invalid or unsafe.');
   let eocd = -1;
-  for (let i = buffer.length - 22; i >= 0 && i > buffer.length - 66000; i--) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) {
+  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65557); i--) {
+    if (buffer.readUInt32LE(i) === 0x06054b50 && i + 22 + buffer.readUInt16LE(i + 20) === buffer.length) {
       eocd = i;
       break;
     }
   }
-  if (eocd < 0) throw new Error('The package is not a readable ZIP archive.');
-
+  if (eocd < 0) throw bad();
   const entries = buffer.readUInt16LE(eocd + 10);
-  let cursor = buffer.readUInt32LE(eocd + 16);
-
+  const centralSize = buffer.readUInt32LE(eocd + 12);
+  const centralOffset = buffer.readUInt32LE(eocd + 16);
+  if (buffer.readUInt16LE(eocd + 4) !== 0 || buffer.readUInt16LE(eocd + 6) !== 0 ||
+      buffer.readUInt16LE(eocd + 8) !== entries || entries > 10000 ||
+      centralOffset + centralSize !== eocd) throw bad();
+  let cursor = centralOffset;
+  let total = 0;
+  const seen = new Set<string>();
   for (let index = 0; index < entries; index++) {
-    if (cursor + 46 > buffer.length) break;
-    if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
-
+    if (cursor + 46 > eocd || buffer.readUInt32LE(cursor) !== 0x02014b50) throw bad();
+    const flags = buffer.readUInt16LE(cursor + 8);
     const method = buffer.readUInt16LE(cursor + 10);
+    const expectedCrc = buffer.readUInt32LE(cursor + 16);
     const compressedSize = buffer.readUInt32LE(cursor + 20);
     const uncompressedSize = buffer.readUInt32LE(cursor + 24);
     const nameLength = buffer.readUInt16LE(cursor + 28);
     const extraLength = buffer.readUInt16LE(cursor + 30);
     const commentLength = buffer.readUInt16LE(cursor + 32);
+    const external = buffer.readUInt32LE(cursor + 38);
     const localOffset = buffer.readUInt32LE(cursor + 42);
-    const rawName = buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8');
-    cursor += 46 + nameLength + extraLength + commentLength;
-
-    // Zip-slip: an entry whose name escapes the target folder is refused outright.
-    const name = rawName.replace(/\\/g, '/');
-    if (name.startsWith('/') || name.split('/').includes('..')) continue;
+    const next = cursor + 46 + nameLength + extraLength + commentLength;
+    if (next > eocd || (flags & 1) || (method !== 0 && method !== 8) ||
+        uncompressedSize > 64 * 1024 * 1024 || (total += uncompressedSize) > 256 * 1024 * 1024) throw bad();
+    // Refuse symlinks and ambiguous paths, including Windows drive and alternate-stream names.
+    const name = buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8').replace(/\\/g, '/');
+    const components = name.replace(/\/$/, '').split('/');
+    if (!name || name.startsWith('/') || components.some((part) => !part || part === '.' || part === '..' || /[<>:\x00-\x1f"|?*]/.test(part) || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)) ||
+        ((external >>> 16) & 0xf000) === 0xa000) throw bad();
+    const key = components.join('/').toLowerCase();
+    if (seen.has(key)) throw bad();
+    seen.add(key);
+    cursor = next;
     if (name.endsWith('/')) continue;
-
+    if (localOffset + 30 > centralOffset || buffer.readUInt32LE(localOffset) !== 0x04034b50) throw bad();
     const localNameLength = buffer.readUInt16LE(localOffset + 26);
     const localExtraLength = buffer.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataStart + compressedSize > centralOffset) throw bad();
     const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
-
     let content: Buffer;
     try {
-      content = method === 0 ? compressed : zlib.inflateRawSync(compressed);
-    } catch {
-      continue;
-    }
-    if (uncompressedSize && content.length !== uncompressedSize) {
-      /* a truncated entry is skipped rather than written half-way */
-      continue;
-    }
-
-    const destination = path.join(target, name);
+      content = method === 0 ? compressed : zlib.inflateRawSync(compressed, { maxOutputLength: 64 * 1024 * 1024 });
+    } catch { throw bad(); }
+    if (content.length !== uncompressedSize || crc32(content) !== expectedCrc) throw bad();
+    const destination = path.join(target, ...components);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.writeFileSync(destination, content);
+    fs.writeFileSync(destination, content, { flag: 'wx' });
   }
+  if (cursor !== eocd) throw bad();
 }
 
 export function deleteExtension(id: string): void {
@@ -369,132 +387,112 @@ export function setEnabled(id: string, enabled: boolean): ExtensionItem {
 
 /* ------------------------------------------------------------------ shipped pair */
 
-/**
- * The two extensions that ship included. They are written by the app itself on every launch, so
- * they exist on a machine with no network and behind a proxy that blocks the store.
- */
-export function ensureShipped(): void {
-  const root = SHIPPED_ROOT();
-  fs.mkdirSync(root, { recursive: true });
-
-  writeIfChanged(path.join(root, SHIPPED_IDS.tracker), {
-    'manifest.json': JSON.stringify(
-      {
-        manifest_version: 3,
-        name: 'HTTP Tracker Plus',
-        version: '1.0.0',
-        description: 'See the redirect chain, status and hosts of the requests this tab makes.',
-        permissions: ['webRequest', 'storage', 'tabs'],
-        host_permissions: ['<all_urls>'],
-        background: { service_worker: 'service-worker.js' },
-        action: { default_title: 'HTTP Tracker Plus', default_popup: 'popup.html' },
-      },
-      null,
-      2,
-    ),
-    'service-worker.js': TRACKER_WORKER,
-    'popup.html': TRACKER_POPUP_HTML,
-    'popup.js': TRACKER_POPUP_JS,
-  });
-
-  writeIfChanged(path.join(root, SHIPPED_IDS.rightClick), {
-    'manifest.json': JSON.stringify(
-      {
-        manifest_version: 3,
-        name: 'Absolute Enable Right Click and Copy',
-        version: '1.3.0',
-        description: 'Restores the right-click menu, text selection and copy on sites that block them.',
-        permissions: ['storage', 'activeTab', 'scripting', 'tabs'],
-        background: { service_worker: 'service-worker.js' },
-        action: { default_title: 'Absolute Enable Right Click and Copy' },
-        content_scripts: [
-          { matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: true },
-        ],
-      },
-      null,
-      2,
-    ),
-    'service-worker.js': RIGHT_CLICK_WORKER,
-    'content.js': RIGHT_CLICK_CONTENT,
-  });
+/** Download originals, verify their publisher identity, and install atomically. */
+let installingIncluded: Promise<void> | null = null;
+export function ensureShipped(): Promise<void> {
+  if (installingIncluded) return installingIncluded;
+  installingIncluded = (async () => {
+    const failures: string[] = [];
+    for (const definition of INCLUDED_EXTENSIONS) {
+      if (load().removedShipped.includes(definition.id)) continue;
+      const target = path.join(SHIPPED_ROOT(), definition.id);
+      if (fs.existsSync(path.join(target, 'manifest.json'))) continue;
+      const staging = `${target}.staging-${crypto.randomUUID()}`;
+      try {
+        const data = await fetchStorePackage(definition.id);
+        const publicKey = verifyStoreCrx(data, definition.id);
+        const payload = crxPayload(data);
+        if (!payload) throw new Error('Invalid extension package.');
+        unzip(payload, staging);
+        const manifest = readManifest(staging);
+        if (!manifest) throw new Error('The extension has no manifest.');
+        if (manifest.key && storeIdOf(manifest) !== definition.id) throw new Error('Extension identity mismatch.');
+        manifest.key = publicKey.toString('base64');
+        fs.writeFileSync(path.join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2));
+        // Respect a removal while the download was in flight.
+        if (!load().removedShipped.includes(definition.id)) {
+          fs.mkdirSync(SHIPPED_ROOT(), { recursive: true });
+          fs.rmSync(target, { recursive: true, force: true });
+          fs.renameSync(staging, target);
+        }
+      } catch (error) {
+        failures.push(`${definition.name}: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+    }
+    if (failures.length) throw new Error(failures.join('; '));
+  })().finally(() => { installingIncluded = null; });
+  return installingIncluded;
 }
 
-function writeIfChanged(folder: string, files: Record<string, string>): void {
-  try {
-    fs.mkdirSync(folder, { recursive: true });
-    for (const [name, body] of Object.entries(files)) {
-      const target = path.join(folder, name);
-      let current = '';
-      try {
-        current = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
-      } catch {
-        current = '';
-      }
-      if (current !== body) fs.writeFileSync(target, body, 'utf8');
-    }
-  } catch {
-    /* a locked folder leaves that extension out; the app still starts */
-  }
+function included(id: string) {
+  const result = INCLUDED_EXTENSIONS.find((item) => item.id === id);
+  if (!result) throw new Error('Unknown included extension.');
+  return result;
 }
 
 export function removeShipped(id: string): void {
+  included(id);
   const shape = load();
   if (!shape.removedShipped.includes(id)) shape.removedShipped.push(id);
   persist(shape);
-  try {
-    fs.rmSync(path.join(SHIPPED_ROOT(), id), { recursive: true, force: true });
-  } catch {
-    /* the row is recorded as removed even when the folder refuses to go */
-  }
+  fs.rmSync(path.join(SHIPPED_ROOT(), id), { recursive: true, force: true });
 }
 
-export function restoreShipped(id: string): void {
+export async function restoreShipped(id: string): Promise<void> {
+  included(id);
   const shape = load();
   shape.removedShipped = shape.removedShipped.filter((entry) => entry !== id);
   persist(shape);
-  ensureShipped();
+  await ensureShipped();
 }
 
-export function shippedState(): { id: string; name: string; description: string; present: boolean; removed: boolean }[] {
+export function shippedState() {
   const shape = load();
-  return SHIPPED_DEFINITIONS.map((definition) => {
-    const folder = path.join(SHIPPED_ROOT(), definition.id);
-    return {
-      ...definition,
-      present: fs.existsSync(path.join(folder, 'manifest.json')) && !shape.removedShipped.includes(definition.id),
-      removed: shape.removedShipped.includes(definition.id),
-    };
-  });
+  return INCLUDED_EXTENSIONS.map((definition) => ({
+    ...definition, description: '',
+    present: fs.existsSync(path.join(SHIPPED_ROOT(), definition.id, 'manifest.json')) && !shape.removedShipped.includes(definition.id),
+    removed: shape.removedShipped.includes(definition.id),
+  }));
+}
+
+/** Send image bytes, not a file URL that the sandbox and CSP cannot load. */
+function iconDataUrl(file: string, folder: string): string {
+  try {
+    if (!file || !fs.realpathSync(file).startsWith(fs.realpathSync(folder) + path.sep)) return '';
+    if (fs.statSync(file).size > 512 * 1024) return '';
+    const bytes = fs.readFileSync(file);
+    const type = bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png'
+      : bytes.subarray(0, 3).equals(Buffer.from([255,216,255])) ? 'image/jpeg'
+      : bytes.subarray(0, 6).toString('ascii').match(/^GIF8[79]a$/) ? 'image/gif' : '';
+    return type ? `data:${type};base64,${bytes.toString('base64')}` : '';
+  } catch { return ''; }
 }
 
 /* ------------------------------------------------------------------ the report */
 
 export function libraryReport(masterEnabled: boolean, customExtensionsEnabled: boolean): ExtensionReport {
-  ensureShipped();
   const shape = load();
 
   const library: ExtensionItem[] = shape.items
     .filter((item) => fs.existsSync(path.join(item.folder, 'manifest.json')))
     .map((item) => ({
       ...item,
-      iconPath: fs.existsSync(item.iconPath) ? item.iconPath : '',
+      iconPath: '',
+      iconDataUrl: iconDataUrl(item.iconPath, item.folder),
     }));
 
   return {
     masterEnabled,
     customExtensionsEnabled,
-    firstParty: INSTALLED_DEFINITIONS.map((definition) => ({
-      id: definition.id,
-      name: definition.name,
-      description: definition.description,
-      enabled: masterEnabled,
-    })),
+    firstParty: [],
     library,
     shipped: shippedState(),
-    recommended: RECOMMENDED.map((entry) => ({
+    recommended: RECOMMENDED_EXTENSIONS.map((entry) => ({
       name: entry.name,
       description: entry.description,
-      url: storeSearchUrl(entry.query),
+      url: entry.url,
       icon: entry.icon,
     })),
   };
@@ -513,12 +511,11 @@ export function profileExtensionFolders(
 ): string[] {
   if (!masterEnabled) return [];
 
-  const firstParty = ensureFirstPartyExtensions().map((extension) => extension.dir);
   const shape = load();
   const removed = new Set(shape.removedShipped);
 
   const shipped = customEnabled
-    ? SHIPPED_DEFINITIONS.filter((definition) => !removed.has(definition.id))
+    ? INCLUDED_EXTENSIONS.filter((definition) => !removed.has(definition.id))
         .map((definition) => path.join(SHIPPED_ROOT(), definition.id))
         .filter((folder) => fs.existsSync(path.join(folder, 'manifest.json')))
     : [];
@@ -544,7 +541,8 @@ export function profileExtensionFolders(
 
   // A folder on a command line that contains a comma splits the list, so anything imported is
   // loaded from the app's own root where no path has one.
-  return dedupe([...firstParty, ...shipped, ...library, ...manual]);
+  const humanPaste = profile.tools.humanPaste ? [ensureHumanPasteExtension(profile.tools.humanPasteSpeed)] : [];
+  return dedupe([...humanPaste, ...shipped, ...library, ...manual]);
 }
 
 function dedupe(folders: string[]): string[] {
@@ -563,7 +561,7 @@ function dedupe(folders: string[]): string[] {
 export function loadArgs(folders: string[]): string[] {
   if (folders.length === 0) return [];
   const safe = folders.filter((folder) => !folder.includes(','));
-  if (safe.length === 0) return firstPartyArgs(folders.slice(0, 1));
+  if (safe.length === 0) return [];
   const joined = safe.join(',');
   return [`--load-extension=${joined}`, `--disable-extensions-except=${joined}`];
 }
@@ -578,191 +576,75 @@ export function revealFolder(folder: string): Promise<void> {
   });
 }
 
-/** Fetch a URL's bytes. Used for a direct .crx link, never for the store front page. */
-export function download(url: string, timeoutMs = 30000): Promise<Buffer> {
+/** Only the Google update service and its package CDN may be contacted, including redirects.
+ * Imported local CRX files remain available through the separate file picker. */
+export function isStoreDownloadUrl(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  return url.protocol === 'https:' && !url.username && !url.password && !url.port &&
+    (host === 'clients2.google.com' || host.endsWith('.googleusercontent.com'));
+}
+
+/** Bounded store download, validating every redirect before making a request. */
+export function download(url: string, timeoutMs = 30000, redirects = 0): Promise<Buffer> {
+  if (redirects > 5) return Promise.reject(new Error('Too many download redirects.'));
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return Promise.reject(new Error('Invalid download URL.')); }
+  if (!isStoreDownloadUrl(parsed)) return Promise.reject(new Error('The store download redirected to an untrusted host.'));
   return new Promise((resolve, reject) => {
-    const request = https.get(
-      url,
-      { headers: { 'user-agent': 'Mozilla/5.0 JoeBrowser/2.0' }, timeout: timeoutMs },
-      (response) => {
-        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          response.resume();
-          resolve(download(new URL(response.headers.location, url).toString(), timeoutMs));
-          return;
-        }
-        if (response.statusCode !== 200) {
-          response.resume();
-          reject(new Error(`The download answered ${response.statusCode}.`));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('end', () => resolve(Buffer.concat(chunks)));
-      },
-    );
+    const request = https.get(parsed, { headers: { 'user-agent': 'Mozilla/5.0 JoeBrowser/2.0' }, timeout: timeoutMs }, (response) => {
+      if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        response.resume();
+        let next: URL;
+        try { next = new URL(response.headers.location, parsed); }
+        catch { reject(new Error('Invalid store download redirect.')); return; }
+        resolve(download(next.toString(), timeoutMs, redirects + 1));
+        return;
+      }
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`The download answered ${response.statusCode}.`));
+        return;
+      }
+      const max = 64 * 1024 * 1024;
+      let size = 0;
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > max) response.destroy(new Error('The extension package exceeds 64 MB.'));
+        else chunks.push(chunk);
+      });
+      response.on('error', reject);
+      response.on('aborted', () => reject(new Error('The extension download was interrupted.')));
+      response.on('end', () => resolve(Buffer.concat(chunks)));
+    });
     request.on('timeout', () => request.destroy(new Error('The download timed out.')));
     request.on('error', reject);
   });
 }
 
-/**
- * Add an extension from a URL.
- *
- * A store *search* or listing page is not something the app can unpack, so it is opened in the
- * user's own browser and the app says so. A direct CRX URL works.
- */
-export async function addFromUrl(url: string): Promise<{ item: ExtensionItem | null; opened: boolean; message: string }> {
-  const clean = url.trim();
-  if (!/^https:\/\//i.test(clean)) throw new Error('That is not an https address.');
-
-  const isStorePage = /chromewebstore\.google\.com/i.test(clean);
-  const isCrx = /\.crx($|\?)/i.test(clean) || /clients2\.google\.com\/service\/update2\/crx/i.test(clean);
-
-  if (isCrx) {
-    const data = await download(clean);
-    const temp = path.join(Paths.root, `download-${Date.now()}.crx`);
-    fs.writeFileSync(temp, data);
-    try {
-      const item = addFromCrxFile(temp);
-      return { item, opened: false, message: `${item.name} was added to the library.` };
-    } finally {
-      try {
-        fs.rmSync(temp, { force: true });
-      } catch {
-        /* the temp file is cleaned on the next run */
-      }
-    }
-  }
-
-  if (isStorePage) {
-    return {
-      item: null,
-      opened: true,
-      message:
-        'A store page cannot be unpacked automatically. The listing is open in your browser - use “Add unpacked folder” on the downloaded copy, or paste a direct .crx link.',
-    };
-  }
-
-  return {
-    item: null,
-    opened: true,
-    message: 'That link is not a .crx package, so it has been opened in your browser instead.',
-  };
+async function fetchStorePackage(id: string): Promise<Buffer> {
+  const update = new URL('https://clients2.google.com/service/update2/crx');
+  update.searchParams.set('response', 'redirect');
+  update.searchParams.set('prodversion', '131.0.6778.0');
+  update.searchParams.set('acceptformat', 'crx3');
+  update.searchParams.set('x', `id=${id}&installsource=ondemand&uc`);
+  return download(update.toString());
 }
 
-/* ------------------------------------------------------------------ sources */
-
-const TRACKER_WORKER = `/* HTTP Tracker Plus - the included edition. No network of its own. */
-const MAX = 300;
-const byTab = new Map();
-
-chrome.webRequest.onCompleted.addListener(
-  (details) => {
-    if (details.tabId < 0) return;
-    const list = byTab.get(details.tabId) || [];
-    const host = (() => { try { return new URL(details.url).host; } catch (e) { return ''; } })();
-    list.push({ url: details.url, host, status: details.statusCode, type: details.type, at: Date.now() });
-    if (list.length > MAX) list.splice(0, list.length - MAX);
-    byTab.set(details.tabId, list);
-    const trackers = list.filter((entry) => isTracker(entry.host)).length;
-    chrome.action.setBadgeText({ tabId: details.tabId, text: String(trackers) });
-    chrome.action.setBadgeBackgroundColor({ tabId: details.tabId, color: '#5B9BF7' });
-  },
-  { urls: ['<all_urls>'] }
-);
-
-chrome.webRequest.onBeforeRedirect.addListener(
-  (details) => {
-    if (details.tabId < 0) return;
-    const list = byTab.get(details.tabId) || [];
-    list.push({ url: details.redirectUrl || details.url, host: (() => { try { return new URL(details.redirectUrl || details.url).host; } catch (e) { return ''; } })(), status: details.statusCode, type: 'redirect', at: Date.now() });
-    byTab.set(details.tabId, list);
-  },
-  { urls: ['<all_urls>'] }
-);
-
-const TRACKERS = ['doubleclick.net','googlesyndication.com','google-analytics.com','googletagmanager.com','facebook.net','connect.facebook.net','scorecardresearch.com','hotjar.com','mixpanel.com','segment.io','criteo.com','taboola.com','outbrain.com','adnxs.com','quantserve.com'];
-function isTracker(host) { return !!host && TRACKERS.some((needle) => host === needle || host.endsWith('.' + needle)); }
-
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (!message || message.type !== 'joe-tracker') return false;
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs && tabs[0];
-    respond({ requests: (tab && byTab.get(tab.id)) || [] });
-  });
-  return true;
-});`;
-
-const TRACKER_POPUP_HTML = `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-body{font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;background:#171a21;color:#e8edf5;width:380px}
-h1{font-size:13px;font-weight:650;margin:0;padding:12px 14px;border-bottom:1px solid #262c37;display:flex;justify-content:space-between}
-h1 span{color:#7c8899;font-weight:500}
-ul{list-style:none;margin:0;padding:0;max-height:420px;overflow:auto}
-li{display:grid;grid-template-columns:34px 1fr;gap:8px;padding:7px 14px;border-bottom:1px solid #1e242e;font-size:12px}
-li b{color:#5B9BF7;font-weight:600}
-li i{display:block;color:#7c8899;font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px}
-.t{color:#ffb454}
-.empty{padding:26px 14px;color:#7c8899;text-align:center}
-</style></head><body>
-<h1>HTTP Tracker Plus <span id="count"></span></h1>
-<ul id="list"></ul>
-<script src="popup.js"></script>
-</body></html>`;
-
-const TRACKER_POPUP_JS = `const list = document.getElementById('list');
-const count = document.getElementById('count');
-chrome.runtime.sendMessage({ type: 'joe-tracker' }, (response) => {
-  const requests = (response && response.requests) || [];
-  count.textContent = requests.length + ' requests';
-  if (requests.length === 0) {
-    list.innerHTML = '<li class="empty" style="display:block">Nothing recorded on this tab yet.</li>';
-    return;
+/** Download and authenticate a package from an official Chrome Web Store listing. */
+export async function addFromUrl(url: string): Promise<{ item: ExtensionItem | null; opened: boolean; message: string }> {
+  const clean = url.trim();
+  const id = storeListingId(clean);
+  if (!id) throw new Error('Enter an official Chrome Web Store extension listing URL.');
+  const data = await fetchStorePackage(id);
+  const publicKey = verifyStoreCrx(data, id);
+  fs.mkdirSync(Paths.root, { recursive: true });
+  const temp = path.join(Paths.root, `download-${crypto.randomUUID()}.crx`);
+  fs.writeFileSync(temp, data, { flag: 'wx' });
+  try {
+    const item = addFromCrxFile(temp, { publicKey, storeUrl: clean });
+    return { item, opened: false, message: `${item.name} was added to the library.` };
+  } finally {
+    fs.rmSync(temp, { force: true });
   }
-  list.innerHTML = requests.slice().reverse().map((entry) => {
-    const tracker = /doubleclick|googlesyndication|google-analytics|googletagmanager|facebook|hotjar|mixpanel|segment|criteo|taboola|outbrain|adnxs|quantserve/.test(entry.host || '');
-    return '<li><b class="' + (tracker ? 't' : '') + '">' + (entry.status || entry.type) + '</b><div><span class="' + (tracker ? 't' : '') + '">' + String(entry.host) + '</span><i title="' + String(entry.url) + '">' + String(entry.url) + '</i></div></li>';
-  }).join('');
-});`;
-
-const RIGHT_CLICK_WORKER = `/* Absolute Enable Right Click and Copy - the included edition. */
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get({ enabled: true }, (values) => {
-    chrome.action.setBadgeText({ text: values.enabled ? '' : 'off' });
-  });
-});
-
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (message && message.type === 'joe-rc-state') {
-    chrome.storage.local.get({ enabled: true }, (values) => respond({ enabled: values.enabled }));
-    return true;
-  }
-  return false;
-});`;
-
-const RIGHT_CLICK_CONTENT = `(function () {
-  'use strict';
-  if (window.__joeRightClickPlus) return;
-  window.__joeRightClickPlus = true;
-
-  var blocked = ['contextmenu', 'copy', 'cut', 'selectstart', 'dragstart', 'mousedown', 'mouseup', 'keydown', 'keyup', 'paste'];
-  function stop(event) {
-    var key = event.type;
-    if (key === 'keydown' || key === 'keyup') {
-      /* Only the keys a page uses to block copy and dev tools, never ordinary typing. */
-      if (event.key !== 'F12' && !(event.ctrlKey && ['c', 'v', 'x', 'a', 's', 'u', 'p'].indexOf(String(event.key).toLowerCase()) >= 0)) return;
-    }
-    event.stopPropagation();
-  }
-  blocked.forEach(function (type) { window.addEventListener(type, stop, true); });
-
-  var style = document.createElement('style');
-  style.textContent = '*{user-select:text !important;-webkit-user-select:text !important;-moz-user-select:text !important;}' +
-    'html,body{overflow:auto !important}';
-  var attach = function () {
-    if (document.head) document.head.appendChild(style);
-    else if (document.documentElement) document.documentElement.appendChild(style);
-    else document.addEventListener('DOMContentLoaded', attach, { once: true });
-  };
-  attach();
-})();`;
+}

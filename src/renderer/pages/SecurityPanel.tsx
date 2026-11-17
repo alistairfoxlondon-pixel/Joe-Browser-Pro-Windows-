@@ -80,7 +80,6 @@ export function SecurityPanel({
                   {account.pinEnabled ? t('sec.on') : t('sec.off')}
                 </Chip>
               </div>
-              <div className="hint">{t('sec.appLock.hint')}</div>
             </div>
             <Button variant={account.pinEnabled ? 'soft' : 'primary'} icon="lock" onClick={() => setPinDialog(true)}>
               {account.pinEnabled ? t('sec.pin.change') : t('sec.pin.set')}
@@ -97,7 +96,6 @@ export function SecurityPanel({
                   {account.twoFactorEnabled ? t('sec.on') : t('sec.off')}
                 </Chip>
               </div>
-              <div className="hint">{t('sec.totpHint')}</div>
             </div>
             <Button
               variant={account.twoFactorEnabled ? 'soft' : 'primary'}
@@ -113,7 +111,6 @@ export function SecurityPanel({
           <div className="spread">
             <div className="grow">
               <div className="row-title">{t('sec.askOnStart')}</div>
-              <div className="hint">{t('sec.askOnStart.hint')}</div>
             </div>
             {/*
               This switch used to write `settings.pinEnabled`, which nothing read: a user could
@@ -145,7 +142,6 @@ export function SecurityPanel({
           <div className="spread">
             <div className="grow">
               <div className="row-title">{t('sec.autoLock')}</div>
-              <div className="hint">{t('sec.autoLock.hint')}</div>
             </div>
             <select
               className="select"
@@ -166,7 +162,6 @@ export function SecurityPanel({
           <div className="spread">
             <div className="grow">
               <div className="row-title">{t('sec.signout')}</div>
-              <div className="hint">{t('sec.signout.hint')}</div>
             </div>
             <Button
               variant="ghost"

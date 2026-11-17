@@ -62,7 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoLockMinutes: 0,
 };
 
-const ACCENTS = ['#4f8cff', '#7c5cff', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4', '#ef4444', '#a855f7'];
+const ACCENTS = ['#2f6bde'];
 
 export function defaultTools(): ToolConfig {
   return {
@@ -188,7 +188,8 @@ export interface CreateProfileInput extends Partial<Profile> {
   preserveFingerprint?: boolean;
 }
 
-export function createProfile(input: CreateProfileInput): Profile {
+/** Construct a profile without writing it, for an editor draft. */
+export function draftProfile(input: CreateProfileInput): Profile {
   const store = load();
   const now = new Date().toISOString();
   const target = asTarget(input.fingerprint?.os);
@@ -237,7 +238,7 @@ export function createProfile(input: CreateProfileInput): Profile {
   let kernelId = input.kernelId ?? '';
   if (!kernelId && !source && !input.preserveFingerprint) {
     const preferred = getSettings().defaultKernelId;
-    const installed = installedKernels();
+    const installed = installedKernels().filter((kernel) => kernel.engine === engineFor(input));
     kernelId =
       preferred && installed.some((kernel) => kernel.id === preferred)
         ? preferred
@@ -247,6 +248,8 @@ export function createProfile(input: CreateProfileInput): Profile {
 
   const profile = sanitizeProfile({
     ...(input as Profile),
+    engine: engineFor(input),
+    startUrl: input.startUrl || getSettings().startPage || DEFAULT_SETTINGS.startPage,
     kernelId,
     id: crypto.randomUUID(),
     name,
@@ -260,9 +263,28 @@ export function createProfile(input: CreateProfileInput): Profile {
     flags: {},
   });
 
-  store.profiles.push(profile);
+  return profile;
+}
+
+export function createProfile(input: CreateProfileInput): Profile {
+  const profile = draftProfile(input);
+  load().profiles.push(profile);
   persist(true);
   log.info(`created profile ${profile.name} (${profile.fingerprint.os})`);
+  return profile;
+}
+
+/** Restore the original ID so its browser-data directory remains associated with it. */
+export function restoreProfile(input: Profile): Profile {
+  if (!input.id || !/^[A-Za-z0-9_-]{1,128}$/.test(input.id)) throw new Error('Invalid profile identifier in the backup.');
+  const store = load();
+  if (store.profiles.some((entry) => entry.id === input.id)) throw new Error('This profile already exists.');
+  const profile = sanitizeProfile(input);
+  store.profiles.push(profile);
+  try { persist(true); } catch (error) {
+    store.profiles.pop();
+    throw error;
+  }
   return profile;
 }
 
@@ -343,7 +365,10 @@ export function deleteProfile(id: string, useTrash = getSettings().useTrash): vo
       log.info(`profile ${profile.name} moved to the recycle bin`);
       return;
     } catch (error) {
-      log.warn('the recycle bin refused the profile; deleting it outright', error);
+      // Never turn a failed recycle-bin operation into permanent deletion.
+      store.profiles.splice(index, 0, profile);
+      persist(true);
+      throw error;
     }
   }
 
@@ -370,7 +395,7 @@ export function removeProfileData(id: string): void {
  */
 export function duplicateProfile(id: string): Profile {
   const source = findProfileOrThrow(id);
-  const assignment = assignDifferentKernel(installedKernels(), source, allProfiles());
+  const assignment = assignDifferentKernel(installedKernels().filter((kernel) => kernel.engine === source.engine), source, allProfiles());
   return createProfile({
     ...source,
     name: source.name,
@@ -429,6 +454,13 @@ export function alignProfileWithProxy(id: string): Profile {
   });
 }
 
+/** Changes when the configured route or its credentials change; never exposes credentials. */
+export function profileLocationKey(profile: Profile): string {
+  const p = profile.proxy;
+  if (p.type === 'none') return 'direct';
+  return crypto.createHash('sha256').update(JSON.stringify([p.type, p.host, p.port, p.user, p.passwordEnc])).digest('hex');
+}
+
 export function summarise(profile: Profile, running: boolean, all?: Profile[]): ProfileSummary {
   const accent = ACCENTS[Math.abs(hash(profile.id)) % ACCENTS.length]!;
   const comparison = all && all.length > 1
@@ -446,7 +478,8 @@ export function summarise(profile: Profile, running: boolean, all?: Profile[]): 
     browserVersion: profile.browserVersion,
     proxyLabel: proxyLabel(profile.proxy),
     proxyDetail: proxyDetail(profile.proxy),
-    hasProxy: proxyEnabled(profile.proxy),
+    hasProxy: profile.proxy.type !== 'none',
+    locationKey: profileLocationKey(profile),
     proxyCountry: profile.proxy.lastCountryCode,
     lastOpenedAt: profile.lastOpenedAt,
     openCount: profile.openCount,

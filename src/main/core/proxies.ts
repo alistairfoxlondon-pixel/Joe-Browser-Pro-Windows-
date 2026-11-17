@@ -67,9 +67,10 @@ function persist(entries: StoredEntry[]): void {
 
 /** A copy safe to hand the renderer: never the ciphertext, only whether one exists. */
 export function publicEntry(entry: StoredEntry): ProxyEntry {
+  const { passwordEnc, ...visible } = entry;
   return {
-    ...entry,
-    config: { ...entry.config, password: '', passwordEnc: entry.passwordEnc ? 'set' : '' },
+    ...visible,
+    config: { ...entry.config, password: '', passwordEnc: passwordEnc ? 'set' : '' },
   };
 }
 
@@ -81,19 +82,32 @@ export function passwordOf(entry: StoredEntry): string {
   return decryptSecret(entry.passwordEnc);
 }
 
-export function saveEntry(input: Partial<StoredEntry> & { config: ProxyConfig }): StoredEntry {
+export function saveEntry(input: Partial<StoredEntry> & { config: ProxyConfig; replacePassword?: boolean }): StoredEntry {
   const entries = listEntries();
-  const shaped = shape(input);
+  const shaped = shape(input.replacePassword && !input.config.password
+    ? { ...input, passwordEnc: '', config: { ...input.config, passwordEnc: '' } }
+    : input);
   const index = input.id ? entries.findIndex((entry) => entry.id === input.id) : -1;
   if (index >= 0) {
     // Editing a proxy keeps the credential when the form left it blank, the way the original's
     // editor did: a password field shows nothing, and treating "unchanged" as "cleared" is how a
     // working proxy silently stops working.
-    if (!input.config.password && entries[index]!.passwordEnc) {
+    if (!input.replacePassword && !input.config.password && entries[index]!.passwordEnc) {
       shaped.passwordEnc = entries[index]!.passwordEnc;
       shaped.config.passwordEnc = entries[index]!.passwordEnc;
     }
-    shaped.lastStatus = 0;
+    const previous = entries[index]!;
+    const changed = previous.config.type !== shaped.config.type || previous.config.host !== shaped.config.host ||
+      previous.config.port !== shaped.config.port || previous.config.user !== shaped.config.user || input.replacePassword === true;
+    if (changed) {
+      shaped.lastStatus = 0; shaped.lastIp = ''; shaped.lastCountry = ''; shaped.lastCountryCode = '';
+      shaped.lastCity = ''; shaped.lastTimezone = ''; shaped.lastLatencyMs = 0; shaped.lastChecked = '';
+      Object.assign(shaped.config, { lastIp: '', lastCountry: '', lastCountryCode: '', lastTimezone: '', lastCity: '' });
+    } else {
+      Object.assign(shaped, { lastStatus: previous.lastStatus, lastIp: previous.lastIp, lastCountry: previous.lastCountry,
+        lastCountryCode: previous.lastCountryCode, lastCity: previous.lastCity, lastTimezone: previous.lastTimezone,
+        lastLatencyMs: previous.lastLatencyMs, lastChecked: previous.lastChecked });
+    }
     entries[index] = shaped;
   } else {
     entries.push(shaped);
@@ -219,8 +233,17 @@ export async function testEntry(id: string): Promise<ProxyEntry> {
 
   const entry = entries[index]!;
   const result = await testProxy(entry.config, passwordOf(entry));
+  // Re-read after the network request so concurrent tests and edits do not overwrite each other.
+  const current = listEntries();
+  const currentIndex = current.findIndex((row) => row.id === id);
+  if (currentIndex < 0) throw new Error('That proxy is no longer in the library.');
+  const latest = current[currentIndex]!;
+  // A result for an old endpoint must not be displayed for an edited proxy.
+  if (JSON.stringify(latest.config) !== JSON.stringify(entry.config) || latest.passwordEnc !== entry.passwordEnc) {
+    return publicEntry(latest);
+  }
   const updated: StoredEntry = {
-    ...entry,
+    ...latest,
     lastStatus: result.ok ? 1 : -1,
     lastIp: result.ip || entry.lastIp,
     lastCountry: result.country || entry.lastCountry,
@@ -230,15 +253,14 @@ export async function testEntry(id: string): Promise<ProxyEntry> {
     lastLatencyMs: result.latencyMs,
     lastChecked: new Date().toISOString(),
   };
-  entries[index] = updated;
-  persist(entries);
+  current[currentIndex] = updated;
+  persist(current);
   return publicEntry(updated);
 }
 
 /** Check every saved proxy, three at a time. */
 export async function testAll(): Promise<ProxyEntry[]> {
   const entries = listEntries();
-  const results: ProxyEntry[] = [];
   const queue = entries.slice();
 
   const worker = async (): Promise<void> => {
@@ -246,7 +268,7 @@ export async function testAll(): Promise<ProxyEntry[]> {
       const next = queue.shift();
       if (!next) return;
       try {
-        results.push(await testEntry(next.id));
+        await testEntry(next.id);
       } catch {
         /* one proxy that cannot be checked does not stop the rest */
       }
@@ -254,7 +276,8 @@ export async function testAll(): Promise<ProxyEntry[]> {
   };
 
   await Promise.all([worker(), worker(), worker()]);
-  return results;
+  // Return the complete current vault even if a single test failed.
+  return listEntries().map(publicEntry);
 }
 
 /* ------------------------------------------------------------------ net check */

@@ -12,6 +12,10 @@ on:
         description: 'Mark the release as a pre-release'
         type: boolean
         default: false
+      publish:
+        description: 'Publish the release after all checks pass (leave off for verification)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -99,7 +103,35 @@ jobs:
       - name: Test the installed Windows application
         run: node scripts/windows-smoke.mjs
 
+      - name: Test live browser and store downloads
+        shell: bash
+        run: |
+          set -o pipefail
+          npx esbuild scripts/live-windows-smoke.ts --bundle --platform=node --format=cjs --external:playwright-core --outfile=live-windows-smoke.cjs
+          node live-windows-smoke.cjs 2>&1 | tee live-smoke-output.txt
+
+      - name: Report live test failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f live-smoke-output.txt ]; then
+            detail=$(tail -30 live-smoke-output.txt | tr '\n' '|' | cut -c1-6000)
+            echo "::error title=LIVE TEST OUTPUT::$detail"
+          fi
+
+      - name: Upload verification binaries
+        if: ${{ inputs.publish != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-verification-binaries
+          path: |
+            release/JoeBrowserSetup.exe
+            release/JoeBrowser.exe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Publish the release
+        if: ${{ inputs.publish == true }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}

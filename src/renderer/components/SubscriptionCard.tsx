@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { KeyOutlined, LoginOutlined, LogoutOutlined } from '@mui/icons-material';
+import { KeyOutlined } from '@mui/icons-material';
 import { cloud, daysLeft } from '../cloud/client';
 import { useSubscription } from '../cloud/subscription';
 import { ActivateDialog } from './ActivateDialog';
@@ -22,9 +22,7 @@ export function SubscriptionCard({ onSignedOut }: { onSignedOut: () => void | Pr
   const until = entitlement?.expiresAt ? new Date(entitlement.expiresAt) : null;
   const isAdmin = entitlement?.isAdmin === true;
 
-  const title = !user
-    ? 'Local mode'
-    : tier === 'premium'
+  const title = tier === 'premium'
       ? isAdmin
         ? 'Administrator'
         : 'Premium'
@@ -32,9 +30,7 @@ export function SubscriptionCard({ onSignedOut }: { onSignedOut: () => void | Pr
         ? 'Free trial'
         : 'Free plan';
 
-  const meta = !user
-    ? 'One profile. Sign in to activate a license and sync your plan.'
-    : tier === 'free'
+  const meta = tier === 'free'
       ? 'One profile included. A license unlocks unlimited profiles.'
       : until
         ? `Valid until ${until.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}${tier === 'trial' ? ` — ${days} day${days === 1 ? '' : 's'} left` : ''}`
@@ -68,29 +64,10 @@ export function SubscriptionCard({ onSignedOut }: { onSignedOut: () => void | Pr
           </div>
         </div>
         <div className="sub-actions">
-          {user ? (
-            <>
-              <Button variant="primary" size="sm" icon="key" onClick={() => setActivateOpen(true)}>
-                Activate license
-              </Button>
-              <Button variant="ghost" size="sm" icon="logout" busy={busy} onClick={() => void signOut()}>
-                Sign out
-              </Button>
-            </>
-          ) : (
-            <Button variant="primary" size="sm" icon="key" onClick={onSignedOut}>
-              <LoginOutlined sx={{ fontSize: 17, verticalAlign: -4, mr: 0.5 }} />
-              Sign in
-            </Button>
-          )}
+          <Button variant="primary" size="sm" icon="key" onClick={() => setActivateOpen(true)}>Activate license</Button>
+          <Button variant="ghost" size="sm" icon="logout" busy={busy} onClick={() => void signOut()}>Sign out</Button>
         </div>
       </div>
-      {!user ? null : (
-        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-3)' }}>
-          <LogoutOutlined sx={{ fontSize: 14 }} />
-          Signing out returns you to the sign-in screen. Profiles stay on this PC either way.
-        </div>
-      )}
       <ActivateDialog open={activateOpen} onClose={() => setActivateOpen(false)} onActivated={() => void subscription.refresh()} />
     </>
   );

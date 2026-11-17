@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CdpClient, delay } from './cdp';
-import { detectInstalledBrowsers } from './catalog';
+import { installedKernels, resolveKernelExe } from './catalog';
 import { log } from './log';
 import { freePort } from './net';
 
@@ -35,10 +35,10 @@ const PROBE = `(() => {
 })()`;
 
 export async function learnMachineGpu(): Promise<{ vendor: string; renderer: string }> {
-  const detected = await detectInstalledBrowsers();
-  const candidate = detected.find((browser) => browser.engine !== 'firefox') ?? detected[0];
-  if (!candidate) {
-    throw new Error('No browser is installed, so there is no adapter to read. Install Chrome or Edge first.');
+  const candidate = installedKernels().find((browser) => browser.engine !== 'firefox');
+  const executable = candidate ? resolveKernelExe(candidate.id) : null;
+  if (!executable) {
+    throw new Error('Install an app-managed Chromium browser build before reading the graphics adapter.');
   }
 
   const sandbox = path.join(os.tmpdir(), `joe-gpu-${Date.now()}`);
@@ -59,7 +59,7 @@ export async function learnMachineGpu(): Promise<{ vendor: string; renderer: str
 
   let child;
   try {
-    child = spawn(candidate.path, args, { stdio: 'ignore', windowsHide: true, detached: false });
+    child = spawn(executable, args, { stdio: 'ignore', windowsHide: true, detached: false });
   } catch (error) {
     fs.rmSync(sandbox, { recursive: true, force: true });
     log.error('the GPU probe could not start a browser', error);

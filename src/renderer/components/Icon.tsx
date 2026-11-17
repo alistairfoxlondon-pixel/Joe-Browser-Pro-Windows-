@@ -1,3 +1,4 @@
+import { siTelegram } from 'simple-icons/icons';
 import type { ComponentType, ReactNode } from 'react';
 import People from '@mui/icons-material/People';
 import History from '@mui/icons-material/History';
@@ -167,7 +168,7 @@ function TelegramIcon({ size, className }: { size: number; className?: string })
       fill="currentColor"
       aria-hidden="true"
     >
-      <path d="M21.9 2.1 2.7 9.9c-1.3.5-1.2 1.3-.2 1.6l4.9 1.5 1.9 5.8c.2.6.4.8 1 .8.4 0 .8-.2 1.1-.5l2.9-2.7 4.8 3.6c.9.5 1.6.3 1.9-.8l3.1-19.1c.2-1.3-.5-1.9-1.9-1.5zM8.9 13.5l10-9.1c.5-.4 1-.1.6.3l-8.2 8.4-.3 3.4-2.1-3z" />
+      <path d={siTelegram.path} />
     </svg>
   );
 }

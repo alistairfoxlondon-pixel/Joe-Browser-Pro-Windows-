@@ -27,6 +27,9 @@ import {
 import { BatchCreateModal } from './BatchCreateModal';
 import { messageOf } from '../util';
 import type { AppSettings } from '../../shared/types';
+import { useSubscription } from '../cloud/subscription';
+import { FREE_PROFILE_LIMIT } from '../cloud/client';
+import { ActivateDialog } from '../components/ActivateDialog';
 
 /**
  * Tools and data.
@@ -50,6 +53,9 @@ export function ToolsPage({
   const { t } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
+  const subscription = useSubscription();
+  const [activateOpen, setActivateOpen] = useState(false);
+  const remaining = subscription.tier === 'free' ? Math.max(0, FREE_PROFILE_LIMIT - profiles.length) : undefined;
 
   const [stats, setStats] = useState<StoreStats | null>(null);
   const [trash, setTrash] = useState<TrashItem[]>([]);
@@ -89,7 +95,7 @@ export function ToolsPage({
   const tile = (
     icon: IconName,
     title: string,
-    description: string,
+    _description: string,
     action: () => void,
     busyKey?: string,
     tone?: 'accent' | 'warn' | 'err' | 'ok',
@@ -100,7 +106,6 @@ export function ToolsPage({
       </div>
       <div>
         <div className="tile-title">{title}</div>
-        <div className="tile-desc">{description}</div>
       </div>
       <div className="tile-foot">
         <span className="faint" style={{ fontSize: 11.5 }}>
@@ -151,7 +156,6 @@ export function ToolsPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('tools.title')}</h1>
-          <div className="sub">{t('tools.sub')}</div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="folder" onClick={() => void bridge().openDataDir()}>
@@ -167,14 +171,14 @@ export function ToolsPage({
       </header>
 
       <div className="content">
-        <div className="content-inner">
+        <div className="content-inner tools-content">
           <div className="section-label">{t('tools.title')}</div>
           <div className="tiles">
-            {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => setBatching(true))}
+            {tile('layers', t('tools.batch'), t('tools.batch.hint'), () => subscription.tier === 'free' ? setActivateOpen(true) : setBatching(true))}
             {tile('download', t('tools.import'), t('tools.import.hint'), async () => {
               setBusy('import');
               try {
-                const count = await bridge().importProfiles();
+                const count = await bridge().importProfiles(remaining);
                 await refreshProfiles();
                 if (count > 0) toast.success(t('btn.import'), String(count));
               } catch (error) {
@@ -209,24 +213,21 @@ export function ToolsPage({
 
           <div className="section-label">{t('tools.storage')}</div>
           <div className="stat-grid">
-            <Stat value={profiles.length} label={t('set.stat.profiles')} />
-            <Stat value={stats ? bytes(stats.storeBytes) : '—'} label={t('set.stat.store')} />
-            <Stat value={stats ? bytes(stats.freeBytes) : '—'} label={t('set.stat.free')} />
-            <Stat value={stats ? bytes(stats.kernelsBytes) : '—'} label={t('set.stat.kernels')} />
-            <Stat value={stats ? bytes(stats.historyBytes) : '—'} label={t('set.stat.history')} />
-            <Stat value={stats ? bytes(stats.trashBytes) : '—'} label={t('set.stat.trash')} />
+            <Stat icon="profiles" value={profiles.length} label={t('set.stat.profiles')} />
+            <Stat icon="database" value={stats ? bytes(stats.storeBytes) : '—'} label={t('set.stat.store')} />
+            <Stat icon="save" value={stats ? bytes(stats.freeBytes) : '—'} label={t('set.stat.free')} />
+            <Stat icon="browsers" value={stats ? bytes(stats.kernelsBytes) : '—'} label={t('set.stat.kernels')} />
+            <Stat icon="history" value={stats ? bytes(stats.historyBytes) : '—'} label={t('set.stat.history')} />
+            <Stat icon="trash" value={stats ? bytes(stats.trashBytes) : '—'} label={t('set.stat.trash')} />
           </div>
 
           {stats ? (
             <div className="panel" style={{ marginTop: 12 }}>
               <div className="spread" style={{ marginBottom: 8 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 570 }}>{t('set.data')}</span>
-                <span className="faint mono" style={{ fontSize: 11.5 }}>{stats.dataDir}</span>
+                <span className="faint mono storage-path" style={{ fontSize: 11.5 }}>{stats.dataDir}</span>
               </div>
               <Meter value={usedPercent} tone={usedPercent > 90 ? 'err' : usedPercent > 70 ? 'warn' : 'ok'} />
-              <div className="hint" style={{ marginTop: 6 }}>
-                {stats.storeBytes ? bytes(stats.storeBytes) : '0 B'} used · {bytes(stats.freeBytes)} free
-              </div>
 
               {stats.perProfile.length > 0 ? (
                 <div style={{ marginTop: 14 }}>
@@ -274,7 +275,7 @@ export function ToolsPage({
             {t('trash.title')}
           </div>
           {trash.length === 0 ? (
-            <EmptyState icon="trash" title={t('trash.empty')} body={t('trash.empty.body')} />
+            <EmptyState icon="trash" title={t('trash.empty')} body="" />
           ) : (
             <div className="rows">
               {trash.map((item) => (
@@ -297,6 +298,7 @@ export function ToolsPage({
                       variant="soft"
                       icon="refresh"
                       onClick={async () => {
+                        if (remaining === 0) { setActivateOpen(true); return; }
                         try {
                           const id = await bridge().restoreTrash(item.file);
                           toast.success(t('trash.restored').replace('{name}', item.name), id);
@@ -355,6 +357,7 @@ export function ToolsPage({
         </div>
       </div>
 
+      <ActivateDialog open={activateOpen} onClose={() => setActivateOpen(false)} onActivated={() => void subscription.refresh()} />
       {batching ? (
         <BatchCreateModal
           settings={settings ?? ({} as AppSettings)}

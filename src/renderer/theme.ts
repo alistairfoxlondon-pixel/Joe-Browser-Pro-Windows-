@@ -4,17 +4,17 @@ import { createTheme } from '@mui/material/styles';
  * The Material theme, aligned to the application tokens in styles.css.
  *
  * One primary colour everywhere - the same cobalt the shell uses - flat surfaces, an 8px rhythm,
- * a smaller radius than Material's default, and the Telenor/Fira Sans stack. No gradients are
+ * a smaller radius than Material's default, and the IBM Plex Sans stack. No gradients are
  * introduced here or anywhere else: elevation is drawn with solid surfaces and hairlines.
  */
 
 export const PRIMARY = '#2f6bde';
 
 const shared = {
-  shape: { borderRadius: 8 },
+  shape: { borderRadius: 6 },
   spacing: 8,
   typography: {
-    fontFamily: `'Telenor', 'Fira Sans', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif`,
+    fontFamily: `'IBM Plex Sans', sans-serif`,
     fontSize: 14,
     button: { textTransform: 'none' as const, fontWeight: 600 },
   },
@@ -26,6 +26,9 @@ export function muiTheme(mode: 'dark' | 'light') {
     ...shared,
     palette: {
       mode,
+      success: { main: PRIMARY },
+      warning: { main: PRIMARY },
+      error: { main: PRIMARY },
       primary: { main: PRIMARY, light: dark ? '#6f9bef' : '#4f86ee', dark: '#2457b8', contrastText: '#ffffff' },
       background: dark
         ? { default: '#0e1014', paper: '#171a20' }
@@ -36,6 +39,7 @@ export function muiTheme(mode: 'dark' | 'light') {
         : { primary: '#10151d', secondary: '#414d61' },
     },
     components: {
+      MuiCssBaseline: { styleOverrides: { html: { backgroundColor: 'var(--bg)' }, body: { backgroundColor: 'var(--bg)', color: 'var(--text)' } } },
       MuiButton: {
         defaultProps: { disableElevation: true },
         styleOverrides: {

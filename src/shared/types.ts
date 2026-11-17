@@ -153,6 +153,8 @@ export interface ProfileSummary {
   proxyDetail: string;
   hasProxy: boolean;
   proxyCountry: string;
+  /** Opaque connection fingerprint used to discard outdated location lookups. */
+  locationKey: string;
   lastOpenedAt: string;
   openCount: number;
   createdAt: string;
@@ -181,6 +183,10 @@ export interface KernelBuild {
   /** 'Microsoft Windows' etc, shown on the card. */
   os: string;
   downloadUrl: string;
+  /** Vendor-provided SHA-256 for a verified archive, when available. */
+  sha256?: string;
+  /** Underlying browser engine version when it differs from the product version. */
+  runtimeVersion?: string;
   installed: boolean;
   /** Populated once installed. */
   path: string;
@@ -193,6 +199,7 @@ export interface InstalledKernel {
   version: string;
   path: string;
   exePath: string;
+  runtimeVersion?: string;
   installedAt: string;
 }
 
@@ -230,6 +237,13 @@ export interface ProxyBatchRow {
   country: string;
   latencyMs: number;
   error: string;
+}
+
+export interface ProfileLocation {
+  key: string;
+  country: string;
+  countryCode: string;
+  ok: boolean;
 }
 
 export interface ProxyCheckResult {
@@ -352,6 +366,8 @@ export interface ExtensionItem {
   storeUrl: string;
   /** Absolute path of the icon inside the package, or '' when it ships none. */
   iconPath: string;
+  /** Safe, bounded image data for the sandboxed renderer. */
+  iconDataUrl?: string;
   /** The id the extension is known by on the store, recovered from the manifest key. */
   storeId: string;
   /** True when this is one of the app's own written extensions. */
@@ -368,7 +384,7 @@ export interface ExtensionReport {
   /** Everything in the library. */
   library: ExtensionItem[];
   /** The two included extensions and whether each is present. */
-  shipped: { id: string; name: string; description: string; present: boolean; removed: boolean }[];
+  shipped: { id: string; name: string; description: string; present: boolean; removed: boolean; icon: string }[];
   recommended: { name: string; description: string; url: string; icon: string }[];
 }
 
@@ -557,9 +573,11 @@ export interface Bridge {
 
   listProfiles(): Promise<ProfileSummary[]>;
   getProfile(id: string): Promise<Profile | null>;
+  getProfileLocation(id: string): Promise<ProfileLocation>;
   /** The stored profile plus a sentence describing anything it shares with the workspace. */
   getProfileRelation(id: string): Promise<{ profile: Profile; relation: string }>;
-  createProfile(input: Partial<Profile>): Promise<Profile>;
+  draftProfile(input: Partial<Profile>): Promise<Profile>;
+  createProfile(input: Partial<Profile> & { preserveFingerprint?: boolean }): Promise<Profile>;
   updateProfile(id: string, patch: Partial<Profile>): Promise<Profile>;
   deleteProfile(id: string): Promise<void>;
   duplicateProfile(id: string): Promise<Profile>;
@@ -594,7 +612,9 @@ export interface Bridge {
   checkProxy(config: ProxyConfig, password?: string): Promise<ProxyCheckResult>;
   checkDirect(): Promise<ProxyCheckResult>;
   listProxies(): Promise<ProxyEntry[]>;
-  saveProxy(entry: Partial<ProxyEntry> & { config: ProxyConfig }): Promise<ProxyEntry>;
+  /** Resolve credentials only when the user selects a saved proxy. */
+  getSavedProxy(id: string): Promise<ProxyEntry>;
+  saveProxy(entry: Partial<ProxyEntry> & { config: ProxyConfig; replacePassword?: boolean }): Promise<ProxyEntry>;
   deleteProxy(id: string): Promise<void>;
   importProxyList(text: string): Promise<{ added: number; failed: string[] }>;
   testProxyEntry(id: string): Promise<ProxyEntry>;
@@ -605,11 +625,13 @@ export interface Bridge {
   applyProxyToSession(profileId: string, proxyId: string): Promise<boolean>;
   createProfileFromProxy(proxyId: string): Promise<Profile>;
   proxyLine(line: string): Promise<Partial<ProxyConfig> | null>;
+  proxyClipboard(): Promise<Partial<ProxyConfig> | null>;
+  checkIpRisk(ip: string): Promise<{ ip: string; score: number; proxy: string; type: string }>;
   networkReport(proxyId?: string): Promise<NetworkReport>;
 
   /* profiles: import / export */
   exportProfiles(): Promise<string>;
-  importProfiles(): Promise<number>;
+  importProfiles(maxProfiles?: number): Promise<number>;
 
   /* fingerprint */
   runLeakCheck(id: string): Promise<LeakReport>;
@@ -732,7 +754,6 @@ export const SORT_MODES: { id: SortMode; label: string }[] = [
   { id: 'created', label: 'Created' },
   { id: 'running', label: 'Running first' },
   { id: 'os', label: 'Operating system' },
-  { id: 'group', label: 'Group' },
 ];
 export const HUMAN_PASTE_SPEEDS = ['relaxed', 'natural', 'fast', 'instant'] as const;
 export const WEBRTC_MODES = [
@@ -751,7 +772,9 @@ export const FONT_SETS = [
   { id: 'windows', label: 'Windows' },
   { id: 'macos', label: 'macOS' },
   { id: 'linux', label: 'Linux' },
+  { id: 'ios', label: 'iOS' },
+  { id: 'android', label: 'Android' },
   { id: 'minimal', label: 'Minimal' },
 ] as const;
-export const THE_FINGERPRINT_TEST_URL = 'https://ipfighter.com/browser-fingerprint';
+export const THE_FINGERPRINT_TEST_URL = 'https://browsercan.net';
 export const TELEGRAM_USER = 'joegoldberg2025';

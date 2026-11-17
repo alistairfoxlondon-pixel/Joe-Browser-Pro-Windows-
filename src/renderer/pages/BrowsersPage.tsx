@@ -3,16 +3,15 @@ import type { AppSettings, DetectedBrowser, KernelBuild, SystemInfo } from '../.
 import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
-import { Banner, Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
+import { BrowserLogo } from '../components/BrowserLogo';
+import { Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
 
 /**
  * Browsers and builds.
  *
- * Two different things share this page because they answer one question: which binary will a
- * profile launch? A detected browser is whatever this PC already has; a downloaded build is one
- * this app owns, so every profile pinned to it reports the same version and no silent update can
- * move the version under a logged-in session.
+ * Detected browsers are informational only. Profiles launch app-managed builds, so a system
+ * browser update cannot silently change the version used by a profile.
  *
  * The graphics card panel lives here too, because reading the adapter means launching a browser,
  * and that is exactly what this page is about.
@@ -126,9 +125,6 @@ export function BrowsersPage({
       <header className="header">
         <div className="header-titles">
           <h1>{t('br.title')}</h1>
-          <div className="sub">
-            {browsers.length} detected · {installed.length} downloaded builds
-          </div>
         </div>
         <div className="header-actions">
           <Button variant="soft" icon="refresh" onClick={() => void load()}>
@@ -138,13 +134,13 @@ export function BrowsersPage({
       </header>
 
       <div className="content">
-        <div className="content-inner">
+        <div className="content-inner browsers-content">
           <div className="section-label">{t('br.detected')}</div>
           {browsers.length === 0 && !loading ? (
             <EmptyState
               icon="browsers"
               title={t('br.none')}
-              body="No Chrome, Edge, Brave or Firefox was found in the usual places. Download a build below, or install a browser and detect again."
+              body=""
               action={
                 <Button variant="primary" icon="refresh" onClick={() => void load()}>
                   {t('btn.detect')}
@@ -156,7 +152,7 @@ export function BrowsersPage({
               {browsers.map((browser) => (
                 <div className="row" key={browser.path}>
                   <div className="row-icon" style={{ background: 'var(--accent-soft)', color: 'var(--accent-hi)' }}>
-                    <Icon name="browsers" />
+                    <BrowserLogo engine={browser.engine} />
                   </div>
                   <div className="row-main">
                     <div className="row-title">
@@ -184,13 +180,13 @@ export function BrowsersPage({
 
           <div className="section-label">{t('br.kernels')}</div>
           {installed.length === 0 ? (
-            <EmptyState icon="download" title={t('br.kernel.empty')} body={t('br.kernel.empty.body')} />
+            <EmptyState icon="download" title={t('br.kernel.empty')} body="" />
           ) : (
             <div className="rows">
               {installed.map((kernel) => (
                 <div className="row" key={kernel.id}>
                   <div className="row-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
-                    <Icon name="layers" />
+                    <BrowserLogo engine={kernel.engine} />
                   </div>
                   <div className="row-main">
                     <div className="row-title">
@@ -220,7 +216,7 @@ export function BrowsersPage({
                   .map((kernel) => (
                     <div className="row" key={kernel.id}>
                       <div className="row-icon">
-                        <Icon name="download" />
+                        <BrowserLogo engine={kernel.engine} />
                       </div>
                       <div className="row-main">
                         <div className="row-title">
@@ -228,7 +224,7 @@ export function BrowsersPage({
                           <Chip tone="muted">{kernel.channel}</Chip>
                         </div>
                         <div className="row-sub">
-                          {kernel.os} · {Math.round(kernel.sizeBytes / 1_048_576)} MB
+                          {kernel.os}{kernel.sizeBytes > 0 ? ` · ${Math.round(kernel.sizeBytes / 1_048_576)} MB` : null}
                         </div>
                         {progress[kernel.id] !== undefined ? (
                           <div className="progress" style={{ marginTop: 6 }}>
@@ -273,7 +269,6 @@ export function BrowsersPage({
                   {system?.gpuRenderer || settings.machineGlRenderer || <span className="faint">not read yet</span>}
                 </div>
               </div>
-              <div className="hint">{t('br.gpu.hint')}</div>
 
               <div className="divider" />
               <div className="stat-grid">
@@ -291,7 +286,7 @@ export function BrowsersPage({
 
           <div className="section-label">{t('set.browser')}</div>
           <div className="panel">
-            <Field label={t('set.browser')} hint={t('ed.browser.hint')}>
+            <Field label={t('set.browser')}>
               <select
                 className="select"
                 value={settings.defaultEngine}
@@ -313,12 +308,7 @@ export function BrowsersPage({
             />
           </div>
 
-          {settings.machineGlRenderer ? (
-            <Banner tone="ok" icon="check">
-              Profiles can use the card this PC actually has. The editor's “{t('ed.fp.useThis')}” button fills it
-              in per profile, and the value is kept here as the default.
-            </Banner>
-          ) : null}
+
         </div>
       </div>
 

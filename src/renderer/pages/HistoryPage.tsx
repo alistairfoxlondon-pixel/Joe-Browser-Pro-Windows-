@@ -162,7 +162,7 @@ export function HistoryPage({ profiles }: { profiles: ProfileSummary[] }): React
               <EmptyState
                 icon="history"
                 title={t('history.empty')}
-                body="A page is recorded the first time a profile opens it, and the record belongs to that profile alone."
+                body=""
               />
             ) : (
               <div className="rows">
@@ -193,11 +193,7 @@ export function HistoryPage({ profiles }: { profiles: ProfileSummary[] }): React
             <EmptyState
               icon="history"
               title={loading ? t('generic.loading') : t('history.empty')}
-              body={
-                query
-                  ? t('empty.nomatch.sub')
-                  : 'Nothing has been visited yet. Open a profile and browse: every page lands here, under that profile only.'
-              }
+              body={query ? t('empty.nomatch.sub') : ""}
             />
           ) : (
             <div className="rows">

@@ -1,13 +1,7 @@
 import { useCallback, type ReactNode } from 'react';
 import { DarkMode, LightMode } from '@mui/icons-material';
 
-/**
- * One pill, two glyphs, instant switch.
- *
- * The theme flips by writing the document attribute directly - no transition class is armed, so
- * colours change in the same frame, and `localStorage` remembers the choice before the next
- * paint. Closing and reopening the app restores it without a flash.
- */
+/** Switch the application theme without reloading the workspace. */
 
 export function ThemeToggle({
   theme,

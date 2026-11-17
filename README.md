@@ -1,3 +1,5 @@
+<img src="assets/logo-mark.svg" width="72" alt="Joe Browser logo">
+
 # Joe Browser
 
 **A local-first anti-detect browser workspace for Windows.**
@@ -32,7 +34,7 @@ Uninstall from Windows Settings → Apps; workspace data is preserved.
 | **No two profiles alike** | A new identity is compared against every profile you already have across twelve surfaces and re-rolled until it is unique. |
 | **Real browser builds** | Chromium, Chrome and Firefox are fetched from the vendors' own release channels, installed side by side, pinnable to a profile, and removable. Chrome reaches back eight majors. |
 | **Nothing downloads itself** | A build is fetched the first time something needs it. Opening the application never starts a download. |
-| **Any browser you have** | Chrome, Chromium, Brave, Edge and Firefox already on the PC are detected with their version and path and can be used as they are. |
+| **Managed browser launches** | Profiles launch app-managed builds only; they never silently substitute a browser installed on the PC. The available download catalog remains limited and requires further verification. |
 | **Proxies** | HTTP, HTTPS and SOCKS5 with authentication. Credentials are applied by a local relay, so a password never appears in a browser command line. |
 | **Fingerprint check** | A surface-by-surface comparison of what the profile claims against what a page will observe, plus one click to the six checker sites inside the profile's own session. |
 | **History per profile** | Every page a profile visits, recorded in its own file and invisible to every other profile. Clearable. |
@@ -156,7 +158,7 @@ src/main/          the Electron main process
   core/relay.ts         the local SOCKS5/HTTP relay that holds the proxy password
   core/catalog.ts       vendor release channels, install and removal
   core/store.ts         the profile store
-  core/extensions.ts    the three first-party MV3 extensions, written on every launch
+  core/humanPaste.ts    Chromium context-menu paste extension
   core/history.ts       per-profile history, one JSONL file each
 src/preload/       the only bridge between the UI and the machine
 src/renderer/      the React UI

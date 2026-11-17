@@ -4,16 +4,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
  * The cloud account layer.
  *
  * Every person who uses the app has one Joe Browser account, held in Supabase. Registration and
- * sign-in are email + password; a registration is usable immediately because the project does
- * not require email confirmation. Licensing is enforced by the project itself - the app asks,
- * the project answers, the app obeys - so a modified client cannot mint itself an entitlement.
+ * sign-in are email + password. Accounts require email confirmation. Licensing operations are
+ * authorized by the project; local profile limits are a client-side convenience, not DRM.
  *
  * The publishable key ships with the app on purpose: it is the public key for this desktop
  * client and is safe to embed. The secret keys never leave the project.
  */
 
-export const SUPABASE_URL = 'https://djlmbsaltjqsqpwqdvsg.supabase.co';
-export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_CRVBySmRYTGEVkoio1Z3Dg_rT6LI-tr';
+export const SUPABASE_URL = 'https://rajxyaatbvlrxxzjntmo.supabase.co';
+export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_xT8gFuRnDwKj8dWwhLslLw_TyIZAIK7';
 
 let client: SupabaseClient | null = null;
 
@@ -24,7 +23,7 @@ function supabase(): SupabaseClient {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
-        storageKey: 'joe-cloud-session',
+        storageKey: 'joe-browser-cloud-session-v2',
       },
     });
   }
@@ -59,7 +58,7 @@ export const PLAN_MONTHLY_SECONDS = 2678400; // 31 days
 export const PLAN_YEARLY_SECONDS = 31536000; // 365 days
 
 export function tierOf(entitlement: CloudEntitlement | null): Tier {
-  if (!entitlement) return 'free';
+  if (!entitlement || entitlement.isBlocked) return 'free';
   if (entitlement.isAdmin) return 'premium';
   if (entitlement.expiresAt && new Date(entitlement.expiresAt).getTime() > new Date(entitlement.serverTime).getTime()) {
     return entitlement.plan === 'trial' ? 'trial' : 'premium';
@@ -71,50 +70,6 @@ export function daysLeft(entitlement: CloudEntitlement | null): number {
   if (!entitlement?.expiresAt) return 0;
   const ms = new Date(entitlement.expiresAt).getTime() - new Date(entitlement.serverTime).getTime();
   return Math.max(0, Math.ceil(ms / 86_400_000));
-}
-
-interface EntitlementCache {
-  expiresAt: string | null;
-  serverTime: string;
-  isAdmin: boolean;
-  plan: 'trial' | 'premium' | null;
-  savedAt: number;
-}
-
-const CACHE_KEY = 'joe-entitlement-cache';
-
-function readCache(): CloudEntitlement | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as EntitlementCache;
-    if (!parsed || typeof parsed !== 'object') return null;
-    return {
-      expiresAt: parsed.expiresAt ?? null,
-      serverTime: new Date(Math.max(Date.parse(parsed.serverTime || '') || 0, Date.now())).toISOString(),
-      isAdmin: Boolean(parsed.isAdmin),
-      isBlocked: false,
-      plan: parsed.plan ?? null,
-      source: 'cache',
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(entry: CloudEntitlement): void {
-  try {
-    const payload: EntitlementCache = {
-      expiresAt: entry.expiresAt,
-      serverTime: entry.serverTime,
-      isAdmin: entry.isAdmin,
-      plan: entry.plan,
-      savedAt: Date.now(),
-    };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
-  } catch {
-    /* a full or unavailable store must not break the gate */
-  }
 }
 
 export interface AdminUser {
@@ -146,6 +101,14 @@ export interface CreatedCode {
   code: string;
   id: string;
   createdAt: string;
+}
+
+/** Carries already-issued keys if a later request in a batch fails. */
+export class PartialCodeCreationError extends Error {
+  constructor(message: string, public readonly created: CreatedCode[]) {
+    super(message);
+    this.name = 'PartialCodeCreationError';
+  }
 }
 
 /** The seam the test-suite substitutes; the real implementation is the Supabase project. */
@@ -195,22 +158,12 @@ const realApi: CloudApi = {
     if (error) throw new Error(describe(error.message, 'Could not create the account. Try again.'));
     const user = data.user;
     if (!user?.email) throw new Error('The account did not come back from the server. Try again.');
-    // Registrations confirm themselves (the project's mailer auto-confirms), so a session exists
-    // immediately; when it does not, resend once and report honestly.
-    if (!data.session) {
-      const { error: retryError } = await supabase().auth.signInWithPassword({ email: email.trim(), password });
-      if (retryError) throw new Error('Account created. Sign in with the same details.');
-    }
+    if (!data.session) throw new Error('Check your email to confirm your account, then sign in.');
     return { id: user.id, email: user.email };
   },
 
   async signOut() {
     await supabase().auth.signOut();
-    try {
-      localStorage.removeItem(CACHE_KEY);
-    } catch {
-      /* nothing to clean */
-    }
   },
 
   async currentUser() {
@@ -223,8 +176,6 @@ const realApi: CloudApi = {
   async myEntitlement() {
     const { data, error } = await supabase().rpc('msap_my_entitlement');
     if (error) {
-      const cached = readCache();
-      if (cached) return cached;
       throw new Error(`Could not reach the licensing service. ${describe(error.message, '')}`.trim());
     }
     const row = Array.isArray(data) ? data[0] : data;
@@ -236,7 +187,6 @@ const realApi: CloudApi = {
       plan: row?.plan === 'trial' ? 'trial' : row?.plan === 'premium' ? 'premium' : row?.expires_at ? 'premium' : null,
       source: 'server',
     };
-    writeCache(entitlement);
     return entitlement;
   },
 
@@ -253,7 +203,6 @@ const realApi: CloudApi = {
       source: 'server',
       started: Boolean(row?.started),
     };
-    writeCache(entitlement);
     return entitlement;
   },
 
@@ -264,13 +213,6 @@ const realApi: CloudApi = {
     if (error) throw new Error(describe(error.message, 'That license key was not accepted.'));
     const row = Array.isArray(data) ? data[0] : data;
     const result = { expiresAt: row?.expires_at ?? null, serverTime: row?.server_time ?? new Date().toISOString() };
-    // Fold the fresh expiry into the cache so the gate lifts immediately.
-    try {
-      const current = await realApi.myEntitlement();
-      writeCache({ ...current, expiresAt: result.expiresAt, serverTime: result.serverTime });
-    } catch {
-      /* the next refresh will read it anyway */
-    }
     return result;
   },
 
@@ -318,7 +260,7 @@ const realApi: CloudApi = {
         p_duration_seconds: durationSeconds,
         p_kind: kind,
       });
-      if (error) throw new Error(describe(error.message, 'Could not generate a license key.'));
+      if (error) throw new PartialCodeCreationError(describe(error.message, 'Could not generate a license key.'), created);
       const row = Array.isArray(data) ? data[0] : data;
       created.push({ code: String(row?.code), id: String(row?.id), createdAt: String(row?.created_at) });
     }
