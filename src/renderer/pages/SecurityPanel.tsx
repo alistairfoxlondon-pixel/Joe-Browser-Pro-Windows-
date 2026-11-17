@@ -14,23 +14,39 @@ import { messageOf } from '../util';
  * asked for alongside it. Neither protects the data from someone with the disk - the proxy vault
  * does that with DPAPI - they protect the running app from the person sitting down at the desk.
  *
- * The QR is drawn from the `otpauth://` URI in the renderer, so the secret never has to travel as
- * an image. The key is printed beside it because a camera fails and a person can type.
+ * The local identity is created inside this panel: it is an on-device lock for the person sitting
+ * down at the desk, never the cloud subscription. It stays on this PC.
  */
 
 export function SecurityPanel({
   settings,
   saveSettings,
-  account,
-  onAccountChanged,
 }: {
   settings: AppSettings;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
-  account: AccountSummary | null;
-  onAccountChanged: () => void;
 }): ReactNode {
   const { t } = useI18n();
   const toast = useToast();
+
+  // The local app lock is a separate, on-device identity: an optional PIN and second factor for
+  // the person sitting down at this PC. It is not an account in the cloud sense. It is managed
+  // entirely inside this panel; everything stays on this PC either way.
+  const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [lockChecked, setLockChecked] = useState(false);
+  const refreshLocal = useCallback(async () => {
+    try {
+      const next = await bridge().lockState();
+      setAccount(next.account);
+    } catch {
+      setAccount(null);
+    } finally {
+      setLockChecked(true);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshLocal();
+  }, [refreshLocal]);
+  const onAccountChanged = useCallback(() => void refreshLocal(), [refreshLocal]);
 
   const [pinDialog, setPinDialog] = useState(false);
   const [totpDialog, setTotpDialog] = useState(false);
@@ -38,16 +54,22 @@ export function SecurityPanel({
   return (
     <div className="panel">
       <div className="panel-head">
-        <Icon name="shield" size={16} />
+        <Icon name="lock" size={18} />
         <h3>{t('sec.title')}</h3>
         <div className="grow" />
-        {account ? <Chip tone="muted">{account.email}</Chip> : <Chip tone="warn">{t('gate.skip')}</Chip>}
+        {account ? (
+          <Chip tone="muted">{account.email}</Chip>
+        ) : (
+          <Chip tone="warn">App lock is off</Chip>
+        )}
       </div>
 
       {!account ? (
-        <Banner tone="info" icon="info">
-          {t('sec.needAccount')}
-        </Banner>
+        !lockChecked ? (
+          <Banner tone="info" icon="info">Checking the local app lock…</Banner>
+        ) : (
+          <LocalAccountSetup onDone={onAccountChanged} />
+        )
       ) : (
         <div className="stack">
           <div className="spread">
@@ -79,7 +101,7 @@ export function SecurityPanel({
             </div>
             <Button
               variant={account.twoFactorEnabled ? 'soft' : 'primary'}
-              icon="shield"
+              icon="lock"
               onClick={() => setTotpDialog(true)}
             >
               {account.twoFactorEnabled ? t('sec.totp.manage') : t('sec.totp.setup')}
@@ -274,7 +296,7 @@ function PinDialog({
       }
     >
       <div className="stack">
-        {error ? <Banner tone="err" icon="warning">{error}</Banner> : null}
+        {error ? <Banner tone="err" icon="info">{error}</Banner> : null}
         <Field label={t('sec.pin')} hint={t('sec.pin.hint')}>
           <input
             className="input mono num"
@@ -399,7 +421,7 @@ function TotpDialog({
           </Button>
           <Button
             variant="primary"
-            icon="shield"
+            icon="lock"
             disabled={code.length !== 6}
             busy={busy}
             onClick={enable}
@@ -410,7 +432,7 @@ function TotpDialog({
       }
     >
       <div className="stack">
-        {error ? <Banner tone="err" icon="warning">{error}</Banner> : null}
+        {error ? <Banner tone="err" icon="info">{error}</Banner> : null}
 
         <div className="totp-layout">
           <div className="totp-qr">
@@ -483,5 +505,102 @@ function TotpDialog({
         </div>
       </div>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ the local identity */
+
+/**
+ * The local identity is what the app lock binds to. It has nothing to do with the cloud
+ * subscription: it exists so the window can demand a PIN (and optionally an authenticator code)
+ * from whoever sits down at this PC. Create it here; sign back in if it already exists but this
+ * session is not using it.
+ */
+function LocalAccountSetup({ onDone }: { onDone: () => void }): ReactNode {
+  const [mode, setMode] = useState<'create' | 'signin'>('create');
+  const [hasLocal, setHasLocal] = useState<boolean | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void bridge()
+      .listAccounts()
+      .then((rows) => {
+        setHasLocal(rows.length > 0);
+        if (rows.length > 0) setMode('signin');
+      })
+      .catch(() => setHasLocal(false));
+  }, []);
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (mode === 'create') {
+        await bridge().registerAccount({ email, password, displayName });
+      } else {
+        await bridge().signIn({ email, password });
+      }
+      onDone();
+    } catch (failure) {
+      setError(messageOf(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="stack">
+      <Banner tone="info" icon="lock">
+        The app lock is local to this PC. Create a local identity to turn it on, or sign back into
+        the one that already exists here. It is never sent anywhere, and it is unrelated to your
+        subscription.
+      </Banner>
+
+      <div className="segment full" role="tablist" aria-label="Local identity">
+        <button type="button" role="tab" aria-selected={mode === 'create'} onClick={() => setMode('create')}>
+          Create locally
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'signin'} onClick={() => setMode('signin')}>
+          Sign in{hasLocal === false ? ' (none yet)' : ''}
+        </button>
+      </div>
+
+      {error ? <Banner tone="err" icon="info">{error}</Banner> : null}
+
+      <div className="form-grid">
+        {mode === 'create' ? (
+          <Field label="Display name" hint="Shown on this PC only">
+            <input className="input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Joe" autoComplete="off" />
+          </Field>
+        ) : null}
+        <Field label="Email">
+          <input className="input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" spellCheck={false} />
+        </Field>
+        <Field label="Password" hint={mode === 'create' ? 'At least six characters. Stored only on this PC.' : 'The password for the local identity'}>
+          <input
+            className="input"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void submit();
+            }}
+            placeholder="••••••••"
+            autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
+          />
+        </Field>
+      </div>
+
+      <div className="cluster" style={{ marginTop: 4 }}>
+        <Button variant="primary" icon="lock" busy={busy} disabled={!email.includes('@') || password.length < 6} onClick={() => void submit()}>
+          {mode === 'create' ? 'Create local identity & turn on app lock' : 'Sign in to app lock'}
+        </Button>
+      </div>
+    </div>
   );
 }

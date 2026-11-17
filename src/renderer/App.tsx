@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { AccountSummary, AppInfo, AppSettings, LockState, ProfileSummary, SessionInfo } from '../shared/types';
+import type { AppInfo, AppSettings, ProfileSummary, SessionInfo } from '../shared/types';
 import { bridge, onEvent } from './bridge';
 import { Icon, type IconName } from './components/Icon';
 import { I18nProvider, useI18n } from './i18n';
@@ -13,7 +13,13 @@ import { BrowsersPage } from './pages/BrowsersPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AboutPage } from './pages/AboutPage';
-import { AccountGate, LockScreen } from './pages/AccountGate';
+import { AdminPage } from './pages/AdminPage';
+import { AccountGate } from './pages/AccountGate';
+import { Logo } from './components/Brand';
+import { ThemeToggle } from './components/ThemeToggle';
+import { LockOverlay } from './components/LockOverlay';
+import { cloud, type CloudUser } from './cloud/client';
+import { SubscriptionProvider, useSubscription } from './cloud/subscription';
 
 /**
  * The application shell.
@@ -36,7 +42,8 @@ export type Page =
   | 'browsers'
   | 'tools'
   | 'settings'
-  | 'about';
+  | 'about'
+  | 'admin';
 
 interface NavEntry {
   id: Page;
@@ -55,6 +62,8 @@ const NAV: NavEntry[] = [
   { id: 'about', icon: 'about', group: 'system' },
 ];
 
+const ADMIN_NAV: NavEntry = { id: 'admin', icon: 'key', group: 'system' };
+
 export function App(): ReactNode {
   const [startupAttempt, setStartupAttempt] = useState(0);
   const [page, setPage] = useState<Page>('profiles');
@@ -65,11 +74,27 @@ export function App(): ReactNode {
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState('');
   const [narrow, setNarrow] = useState(false);
-  const [lock, setLock] = useState<LockState | null>(null);
-  const [account, setAccount] = useState<AccountSummary | null>(null);
-  // `entered` separates "the gate was answered" from "a lock state exists": the store must not
-  // paint behind a lock the moment the state arrives.
-  const [entered, setEntered] = useState(false);
+  // undefined = still restoring the stored session; null = signed out / local mode; user = signed in.
+  const [authUser, setAuthUser] = useState<CloudUser | null | undefined>(undefined);
+  // The “continue without an account” choice is remembered, exactly like the theme: reopening the
+  // app must not demand the gate every single launch. Any explicit transition to the gate clears
+  // the flag, so choosing to sign in is honoured the next time the window opens.
+  const [localMode, setLocalMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('joe-local-mode') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const persistLocalMode = useCallback((value: boolean) => {
+    setLocalMode(value);
+    try {
+      if (value) localStorage.setItem('joe-local-mode', '1');
+      else localStorage.removeItem('joe-local-mode');
+    } catch {
+      /* private mode */
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -93,19 +118,19 @@ export function App(): ReactNode {
     setFailure('');
     void (async () => {
       try {
-        const [nextSettings, nextInfo, nextLock] = await Promise.all([
+        const [nextSettings, nextInfo] = await Promise.all([
           bridge().getSettings(),
           bridge().getAppInfo(),
-          bridge().lockState(),
         ]);
         if (!live) return;
         setSettings(nextSettings);
         setInfo(nextInfo);
-        setLock(nextLock);
-        setAccount(nextLock.account);
-        // Nothing behind the gate is read until the gate has been answered. A profile list that
-        // flashes under a lock screen is a profile list someone else just saw.
-        if (nextLock.state === 'open') setEntered(true);
+        document.documentElement.dataset['theme'] = nextSettings.theme;
+        try {
+          localStorage.setItem('joe-theme', nextSettings.theme);
+        } catch {
+          /* private mode */
+        }
 
         const [nextProfiles, nextSessions] = await Promise.all([
           bridge().listProfiles(),
@@ -125,6 +150,23 @@ export function App(): ReactNode {
     };
   }, [startupAttempt]);
 
+  // One restore at startup: the Supabase session decides whether the gate is shown, and in
+  // which mode the workspace opens. Failure means signed-out - the gate, not a crash.
+  useEffect(() => {
+    let live = true;
+    void cloud()
+      .currentUser()
+      .then((user) => {
+        if (live) setAuthUser(user);
+      })
+      .catch(() => {
+        if (live) setAuthUser(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   // Every main-process change that matters to the list arrives on one of these channels.
   useEffect(() => {
     const offs = [
@@ -132,12 +174,6 @@ export function App(): ReactNode {
       onEvent('session:changed', () => void refresh()),
       onEvent('session:removed', () => void refresh()),
       onEvent('profiles:changed', () => void refresh()),
-      onEvent('lock:idle', () => {
-        // The window was idle for as long as the setting allows. Drop back to the lock screen;
-        // the workspace state is kept, so unlocking returns to the same page.
-        setEntered(false);
-        void refreshLock();
-      }),
       onEvent('tray:focus', (payload) => {
         const id = (payload as { profileId?: string }).profileId;
         setPage('profiles');
@@ -163,6 +199,11 @@ export function App(): ReactNode {
       setSettings(saved);
       if (patch.theme) {
         document.documentElement.dataset['theme'] = saved.theme;
+        try {
+          localStorage.setItem('joe-theme', saved.theme);
+        } catch {
+          /* private mode */
+        }
       }
       return saved;
     } catch (error) {
@@ -176,13 +217,6 @@ export function App(): ReactNode {
     for (const session of sessions) map.set(session.profileId, session);
     return map;
   }, [sessions]);
-
-  const refreshLock = useCallback(async () => {
-    const next = await bridge().lockState();
-    setLock(next);
-    setAccount(next.account);
-    return next;
-  }, []);
 
   const toggleShell = useCallback(() => setNarrow((value) => !value), []);
 
@@ -226,40 +260,33 @@ export function App(): ReactNode {
   }, [refresh, toggleShell]);
 
   const running = sessions.length;
+  const signedIn = authUser !== null && authUser !== undefined;
+  const gateAnswered = authUser !== undefined && (signedIn || localMode);
 
-  // The gate and the lock are outside the shell on purpose: no rail, no title bar, no favourite
-  // buttons. There is nothing to navigate to until the question has been answered.
-  const gateAnswered = !lock || lock.state === 'open' || entered;
-
-  if (settings && lock && !gateAnswered) {
+  // While the session is restored, hold a neutral splash: no shell paint, no gate flash.
+  if (authUser === undefined || (settings === null && !failure)) {
     return (
-      <I18nProvider language={settings.language} onChange={(language) => void saveSettings({ language })}>
+      <div className="gate" style={{ placeItems: 'center', display: 'grid' }}>
+        <Logo size={84} />
+      </div>
+    );
+  }
+
+  if (!gateAnswered) {
+    return (
+      <I18nProvider language={settings?.language ?? 'en'} onChange={(language) => void saveSettings({ language })}>
         <ToastProvider>
-          {lock.state === 'gate' ? (
-            <AccountGate
-              onDone={async (signedIn) => {
-                if (signedIn) {
-                  const next = await refreshLock();
-                  setEntered(next.state === 'open');
-                  setAccount(signedIn);
-                } else {
-                  // Skipped: there is nothing to unlock, and the workspace is reachable.
-                  setEntered(true);
-                }
-              }}
-            />
-          ) : (
-            <LockScreen
-              lock={lock}
-              onUnlocked={() => setEntered(true)}
-              onSignOut={async () => {
-                await bridge().signOut();
-                setEntered(false);
-                setAccount(null);
-                await refreshLock();
-              }}
-            />
-          )}
+          <AccountGate
+            onDone={async (user) => {
+              if (user) {
+                setAuthUser(user);
+                persistLocalMode(false);
+              } else {
+                // Local mode: the free plan, one profile, sign-in always available in Settings.
+                persistLocalMode(true);
+              }
+            }}
+          />
         </ToastProvider>
       </I18nProvider>
     );
@@ -270,17 +297,36 @@ export function App(): ReactNode {
       language={settings?.language ?? 'en'}
       onChange={(language) => void saveSettings({ language })}
     >
-      <ToastProvider>
-        <div className={`shell${narrow ? ' narrow' : ''}`}>
-          <Rail page={page} onNavigate={setPage} running={running} profileCount={profiles.length} narrow={narrow} onToggle={toggleShell} info={info} />
+      <SubscriptionProvider user={signedIn ? authUser : null}>
+        <ToastProvider>
+          <div className={`shell${narrow ? ' narrow' : ''}`}>
+            <Rail
+              page={page}
+              onNavigate={setPage}
+              running={running}
+              profileCount={profiles.length}
+              narrow={narrow}
+              onToggle={toggleShell}
+              info={info}
+              onSignOut={
+                signedIn
+                  ? async () => {
+                      await cloud().signOut();
+                      setAuthUser(null);
+                      persistLocalMode(false);
+                      setPage('profiles');
+                    }
+                  : undefined
+              }
+            />
 
-          <main className="main">
-            <TitleBar page={page} running={running} />
-            {failure ? (
-              <div style={{ padding: '12px 26px 0' }}>
-                <FailureBanner message={failure} onRetry={() => setStartupAttempt((value) => value + 1)} />
-              </div>
-            ) : null}
+            <main className="main">
+              <TitleBar page={page} running={running} theme={settings?.theme ?? 'dark'} onTheme={(next) => void saveSettings({ theme: next })} signedIn={signedIn} onSignIn={() => persistLocalMode(false)} onOpenSettings={() => setPage('settings')} />
+              {failure ? (
+                <div style={{ padding: '12px 26px 0' }}>
+                  <FailureBanner message={failure} onRetry={() => setStartupAttempt((value) => value + 1)} />
+                </div>
+              ) : null}
             {failure && !settings ? null : loading || !settings ? (
               <div className="content">
                 <div className="empty">
@@ -294,16 +340,20 @@ export function App(): ReactNode {
                 runningById={runningById}
                 settings={settings}
                 info={info}
-                account={account}
                 refresh={refresh}
-                refreshLock={refreshLock}
                 onNavigate={setPage}
                 saveSettings={saveSettings}
+                onSignedOut={() => {
+                  setAuthUser(null);
+                  persistLocalMode(false);
+                }}
               />
             )}
           </main>
-        </div>
-      </ToastProvider>
+          <LockOverlay />
+          </div>
+        </ToastProvider>
+      </SubscriptionProvider>
     </I18nProvider>
   );
 }
@@ -318,6 +368,7 @@ function Rail({
   narrow,
   onToggle,
   info,
+  onSignOut,
 }: {
   page: Page;
   onNavigate: (page: Page) => void;
@@ -326,8 +377,12 @@ function Rail({
   narrow: boolean;
   onToggle: () => void;
   info: AppInfo | null;
+  onSignOut?: () => void | Promise<void>;
 }): ReactNode {
   const { t } = useI18n();
+  const subscription = useSubscription();
+  const isAdmin = subscription.entitlement?.isAdmin === true;
+  const email = subscription.user?.email ?? '';
 
   const item = (entry: NavEntry) => (
     <button
@@ -351,7 +406,7 @@ function Rail({
     <aside className="rail">
       <div className="rail-drag" />
       <div className="brand">
-        <div className="brand-mark">J</div>
+        <Logo size={narrow ? 34 : 36} />
         <div className="brand-text">
           <div className="brand-name">{t('app.title')}</div>
           <div className="brand-sub">{t('app.tagline')}</div>
@@ -363,6 +418,7 @@ function Rail({
         {NAV.filter((entry) => entry.group === 'workspace').map(item)}
         <div className="nav-group">{t('nav.system')}</div>
         {NAV.filter((entry) => entry.group === 'system').map(item)}
+        {isAdmin ? item(ADMIN_NAV) : null}
       </div>
 
       <div className="rail-foot">
@@ -374,6 +430,17 @@ function Rail({
             </strong>
           </span>
         </div>
+        {email ? (
+          <div className="rail-account" title={email}>
+            <span className="avatar sm">{email.slice(0, 1).toUpperCase()}</span>
+            <span className="grow truncate" style={{ fontSize: 12, color: 'var(--text-2)' }}>{email}</span>
+            {onSignOut ? (
+              <button className="icon-btn sm" type="button" title="Sign out" aria-label="Sign out" onClick={() => void onSignOut()}>
+                <Icon name="logout" size={17} />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="rail-actions">
           <button className="icon-btn" onClick={onToggle} title={narrow ? 'Expand the rail' : 'Collapse the rail'} type="button">
             <Icon name={narrow ? 'chevronRight' : 'chevronLeft'} />
@@ -386,17 +453,57 @@ function Rail({
 
 /* ------------------------------------------------------------------ title bar */
 
-function TitleBar({ page, running }: { page: Page; running: number }): ReactNode {
+function TitleBar({
+  page,
+  running,
+  theme,
+  onTheme,
+  signedIn,
+  onSignIn,
+  onOpenSettings,
+}: {
+  page: Page;
+  running: number;
+  theme: 'dark' | 'light';
+  onTheme: (next: 'dark' | 'light') => void;
+  signedIn: boolean;
+  onSignIn: () => void;
+  onOpenSettings: () => void;
+}): ReactNode {
   const { t } = useI18n();
+  const subscription = useSubscription();
+  const tier = subscription.tier;
+  const days = subscription.entitlement?.expiresAt
+    ? Math.max(0, Math.ceil((new Date(subscription.entitlement.expiresAt).getTime() - Date.now()) / 86_400_000))
+    : 0;
+
   return (
     <div className="titlebar">
       <div className="crumb">
         <span>{t('app.title')}</span>
-        <Icon name="chevronRight" size={11} />
+        <Icon name="chevronRight" size={15} />
         <b>{t(`header.${page}`)}</b>
       </div>
       <div className="spacer" />
-      <div className="live-dot" style={{ marginRight: 130 }}>
+      <button
+        type="button"
+        className={`tier-chip${tier === 'premium' ? ' premium' : tier === 'trial' ? ' trial' : ''}`}
+        onClick={signedIn ? onOpenSettings : onSignIn}
+        title={signedIn ? 'Subscription details' : 'Sign in to activate a license'}
+        style={{ marginRight: 12 }}
+      >
+        {!signedIn
+          ? 'Local mode'
+          : tier === 'premium'
+            ? subscription.entitlement?.isAdmin
+              ? 'Admin'
+              : 'Premium'
+            : tier === 'trial'
+              ? `Trial · ${days}d left`
+              : 'Free plan'}
+      </button>
+      <ThemeToggle theme={theme} onChange={onTheme} />
+      <div className="live-dot" style={{ marginRight: 118, marginLeft: 12 }}>
         <span className={`dot${running > 0 ? ' on' : ''}`} />
         {running > 0
           ? running === 1
@@ -412,7 +519,7 @@ function FailureBanner({ message, onRetry }: { message: string; onRetry: () => v
   const { t } = useI18n();
   return (
     <div className="banner err">
-      <Icon name="warning" />
+      <Icon name="info" />
       <div className="grow">
         <b>{t('err.load')}</b>
         <div style={{ marginTop: 2 }}>{message}</div>
@@ -432,22 +539,20 @@ function Pages({
   runningById,
   settings,
   info,
-  account,
   refresh,
-  refreshLock,
   onNavigate,
   saveSettings,
+  onSignedOut,
 }: {
   page: Page;
   profiles: ProfileSummary[];
   runningById: Map<string, SessionInfo>;
   settings: AppSettings;
   info: AppInfo | null;
-  account: AccountSummary | null;
   refresh: () => Promise<void>;
-  refreshLock: () => Promise<LockState>;
   onNavigate: (page: Page) => void;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  onSignedOut: () => void;
 }): ReactNode {
   const toast = useToast();
   const lastPage = useRef(page);
@@ -472,12 +577,13 @@ function Pages({
         <SettingsPage
           settings={settings}
           info={info}
-          account={account}
           saveSettings={saveSettings}
           refreshProfiles={refresh}
-          onAccountChanged={() => void refreshLock()}
+          onSignedOut={onSignedOut}
         />
       );
+    case 'admin':
+      return <AdminPage />;
     case 'about':
       return <AboutPage info={info} profiles={profiles} />;
     case 'profiles':

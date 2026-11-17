@@ -13,9 +13,11 @@ The workflow installs dependencies, typechecks, builds, runs the suites, package
 portable artifacts, then runs `node scripts/windows-smoke.mjs` **before** publishing.
 The smoke test uses a disposable custom installation directory containing spaces, installs
 all-users silently, launches the installed executable with a real preload/IPC bridge,
-registers without email verification, checks the saved session, quits and restarts, visits
-every page, then uninstalls and checks that workspace data remains. It fails on page errors.
-No test account is created on an external service.
+completes the first-run choice by continuing without an account (the local, free path - no
+account is created anywhere), checks that reopening the app remembers it, visits every page,
+then uninstalls and checks that workspace data remains. It fails on page errors.
+No test account is created on an external service, and no network traffic is generated
+against the licensing backend.
 
 The default tag is derived from the package version. Never reuse a published version for
 changed binaries. Release assets:

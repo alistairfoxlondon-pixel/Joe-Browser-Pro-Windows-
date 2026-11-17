@@ -1,9 +1,19 @@
 import { _electron as electron } from 'playwright-core';
-import { mkdtemp, rm, access, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+
+/**
+ * The installed-application test.
+ *
+ * The packaged installer is what users actually get, so this is what gets proven before a release
+ * ships: install to a custom folder, complete the first-run choice (continue locally - the free,
+ * no-account path, deliberately avoiding any network traffic to the licensing backend), restart
+ * and expect the same destination again, walk every page, then uninstall and confirm the user's
+ * data survives.
+ */
 
 if (process.platform !== 'win32') throw new Error('Run this packaged installer test on Windows.');
 const root = await mkdtemp(path.join(tmpdir(), 'joe-installer-test-'));
@@ -31,13 +41,12 @@ try {
   await access(executablePath);
   console.log('Launching installed application');
   let page = await launch();
-  console.log('Registering local account');
-  await page.locator('.gate input[type=email]').fill('smoke@example.com');
-  await page.locator('.gate input[type=password]').fill('test-password-123');
-  await page.locator('.gate button[type=submit]').click();
+  console.log('Continuing without an account (local, free plan)');
+  await page.locator('.gate-skip').click();
   await workspace(page);
-  const session = JSON.parse(await readFile(path.join(data, 'session.json'), 'utf8'));
-  assert.equal(session.email, 'smoke@example.com');
+  // The choice is remembered: reopening must not demand the gate again.
+  const remembered = await page.evaluate(() => localStorage.getItem('joe-local-mode'));
+  assert.equal(remembered, '1', 'the local-mode choice was not persisted');
   await app.close(); app = null;
   page = await launch();
   await workspace(page);
@@ -53,8 +62,10 @@ try {
   await access(uninstaller);
   // _?= runs the uninstaller in place so the process waits for uninstall to finish.
   execFileSync(uninstaller, ['/S', `_?=${destination}`], { timeout: 120000 });
-  await access(path.join(data, 'session.json')); // uninstall must preserve user data
-  console.log('PASS: custom-directory install, registration without verification, restart, all pages, uninstall.');
+  // Uninstall must preserve user data.
+  await access(data);
+  await access(path.join(data, 'profiles'));
+  console.log('PASS: custom-directory install, local-mode first run, restart, all pages, uninstall.');
 } catch (error) {
   const detail = String(error?.stack || error).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
   console.log(`::error title=Windows installed smoke test::${detail}`);

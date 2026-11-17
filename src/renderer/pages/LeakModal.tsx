@@ -77,7 +77,7 @@ export function LeakModal({
       width="wide"
       footer={
         <>
-          <Chip tone={tone === 'ok' ? 'ok' : tone === 'warn' ? 'warn' : 'err'} icon={tone === 'ok' ? 'shield' : 'warning'}>
+          <Chip tone={tone === 'ok' ? 'ok' : tone === 'warn' ? 'warn' : 'err'} icon={tone === 'ok' ? 'check' : 'info'}>
             {report ? t('fp.pass').replace('{n}', String(report.surfaces.length - failing)).replace('{m}', String(report.surfaces.length)) : t('generic.loading')}
           </Chip>
           <div className="spacer" />
@@ -118,12 +118,12 @@ export function LeakModal({
 
           <div className="grow">
             {error ? (
-              <Banner tone="err" icon="warning">
+              <Banner tone="err" icon="info">
                 <b>{t('err.notRunning')}</b>
                 <div style={{ marginTop: 3 }}>{error}</div>
               </Banner>
             ) : failing > 0 ? (
-              <Banner tone="warn" icon="warning">
+              <Banner tone="warn" icon="info">
                 <b>
                   {failing} {failing === 1 ? 'surface does not' : 'surfaces do not'} match the claim.
                 </b>
@@ -132,7 +132,7 @@ export function LeakModal({
                 </div>
               </Banner>
             ) : report ? (
-              <Banner tone="ok" icon="shield">
+              <Banner tone="ok" icon="check">
                 <b>Every claim matches what was read.</b>
                 <div style={{ marginTop: 3 }}>
                   {mode === 'live'
@@ -165,7 +165,7 @@ export function LeakModal({
                   color: surface.ok ? 'var(--ok)' : 'var(--err)',
                 }}
               >
-                <Icon name={surface.ok ? 'check' : 'warning'} size={14} strokeWidth={2.6} />
+                <Icon name={surface.ok ? 'check' : 'info'} size={16} />
               </span>
 
               <span style={{ flex: '0 0 150px', fontWeight: 570, fontSize: 12.8 }}>{surface.name}</span>

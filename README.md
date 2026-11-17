@@ -15,7 +15,9 @@ Windows administrator permission (UAC); a just-for-me installation normally need
 The application itself runs without administrator rights.
 
 `JoeBrowser.exe` is the **portable alternative**, not an installer: it intentionally opens directly.
-Accounts are local to this PC; registration needs no email verification and makes no cloud account.
+The app runs with or without a Joe Browser account - the free plan keeps one profile, and a 7-day
+trial or license key lifts the ceiling. An account is free to create and exists only for
+licensing; profile data itself stays on this PC.
 User data remains in `%APPDATA%\JoeBrowser`, independently of the installation folder.
 Uninstall from Windows Settings → Apps; workspace data is preserved.
 
@@ -25,7 +27,7 @@ Uninstall from Windows Settings → Apps; workspace data is preserved.
 
 | | |
 |---|---|
-| **Unlimited profiles** | Every profile is its own browser with its own cookies, storage, logins and cache, in its own `--user-data-dir`. No cap and no one-at-a-time limit. |
+| **Isolated profiles** | Every profile is its own browser with its own cookies, storage, logins and cache, in its own `--user-data-dir`. Trial and premium plans are unlimited; the free plan keeps one. |
 | **A real identity per profile** | User agent and client hints, platform, language, screen, timezone, memory, cores, WebGL, canvas and audio noise, and a WebRTC guard. Locale, clock and proxy country are kept in agreement. |
 | **No two profiles alike** | A new identity is compared against every profile you already have across twelve surfaces and re-rolled until it is unique. |
 | **Real browser builds** | Chromium, Chrome and Firefox are fetched from the vendors' own release channels, installed side by side, pinnable to a profile, and removable. Chrome reaches back eight majors. |
@@ -35,13 +37,14 @@ Uninstall from Windows Settings → Apps; workspace data is preserved.
 | **Fingerprint check** | A surface-by-surface comparison of what the profile claims against what a page will observe, plus one click to the six checker sites inside the profile's own session. |
 | **History per profile** | Every page a profile visits, recorded in its own file and invisible to every other profile. Clearable. |
 | **Proxy watch** | The exit address is checked on the profile's interval; a rotation, a proxy that stopped answering and a proxy that came back are all reported. A running profile can be re-pointed without closing its tabs. |
-| **A local account and a lock** | An email account stored as a salted PBKDF2 hash, an optional PIN typed at every launch, and an optional authenticator code. The window locks after the idle interval you set. Nothing is sent anywhere. |
+| **An account, or no account at all** | Sign in or create a Joe Browser account for licensing (7-day trial), or continue without one - either way you can work. A separate local identity, stored as a salted PBKDF2 hash, adds an optional PIN and authenticator code for when you leave the desk; the window locks after the idle interval you set. |
+| **Subscription management** | Your plan, its validity date, license-key activation (monthly, yearly, trial or custom length) and sign-out are all in Settings → Subscription; the current tier rides along in the title bar. |
 | **Workspace audit and repair** | Every pair of profiles is compared across twelve surfaces, plus shared exit addresses and shared builds. "Fix what can be fixed" re-rolls the newer duplicates, oldest identity kept. |
 | **Batch create** | Up to 200 at once, a group, a proxy per line, and a distinct identity and build for every one - not 200 copies of the same machine. |
 | **Cookie manager** | Export a profile's cookies and import them into another, over the browser's own debugging protocol. |
 | **15 languages** | English is complete; each other table shows the share of the interface it covers, and anything missing falls back to English rather than to a key. |
 | **Built to be read** | A real layout system, two themes, a navigation rail that collapses, and a window that works at every width. |
-| **Private by default** | Profile data stays in `%APPDATA%\JoeBrowser`. Proxy passwords are encrypted with Windows DPAPI. No telemetry, no server, no cloud. |
+| **Private by default** | Profile data stays in `%APPDATA%\JoeBrowser`. Proxy passwords are encrypted with Windows DPAPI. No telemetry, no profile sync, no browsing history leaves this PC. The only host the app contacts is the licensing service for account sign-in and subscription state. |
 
 ## Where your data lives
 
@@ -112,9 +115,9 @@ asked:
 | Check | What it proves |
 |---|---|
 | `npm run typecheck` | Both projects compile with `noUnusedLocals`, so no dead code is hiding a mistake |
-| `npm test` → core (30) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear; PBKDF2 and TOTP round-trip against the published vector; a corrupt account file is preserved instead of overwritten; the whole lock lifecycle holds from first registration to sign-out |
-| `npm test` → ui (11) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
-| `npm test` → contract (8) | Every bridge method has a preload entry and a mock, every channel the preload invokes has a handler, every translation key a page uses exists, no renderer calls a browser dialog Electron does not implement, every language table keeps its closing brace, and the release workflow runs its gates before it packages and derives its tag from `package.json` |
+| `npm test` → core (31) | A seed rebuilds the same machine; a new profile differs from every stored one across twelve surfaces; clock and locale follow the proxy; the injected script parses as JavaScript; a proxy password never reaches the store in the clear; PBKDF2 and TOTP round-trip against the published vector; a corrupt account file is preserved instead of overwritten; the whole lock lifecycle holds from first registration to sign-out |
+| `npm test` → ui (14) | Every page and dialog mounts in a real DOM, an empty store shows its empty state, and every control has an accessible name. Any React warning fails the run |
+| `npm test` → contract (12) | Every bridge method has a preload entry and a mock, every channel the preload invokes has a handler, every translation key a page uses exists, no renderer calls a browser dialog Electron does not implement, every language table keeps its closing brace, and the release workflow runs its gates before it packages and derives its tag from `package.json` |
 | `npm run build` | The bundles produce; the main process carries no unresolved import; the tray icon is embedded rather than read from a path that packaging might not ship |
 | `electron-builder` | Both binaries exist, are a plausible size, and carry a Windows version resource |
 
@@ -129,11 +132,9 @@ Actions -> Build EXE -> Run workflow
 ```
 
 The tag comes from `package.json` unless one is given, so a new version is released by bumping the
-version and running the workflow. **The live file still pins `v2.0.0`**; the corrected version is
-staged at `ci/release.yml` and needs one manual copy. See [RELEASE.md](RELEASE.md) for why it
-cannot be moved automatically and the one-minute step to do it. Typecheck, the whole test
-suite and a production build all have to pass before anything is packaged, and the run fails if
-either binary is missing rather than publishing a release with no assets.
+version and running the workflow. Typecheck, the whole test suite and a production build all have
+to pass before anything is packaged, and the run fails if either binary is missing rather than
+publishing a release with no assets. See [RELEASE.md](RELEASE.md) for the full process.
 
 For design work without Electron:
 

@@ -523,7 +523,7 @@ export function Banner({
   icon?: IconName;
   children: ReactNode;
 }): ReactNode {
-  const fallback: IconName = tone === 'warn' || tone === 'err' ? 'warning' : tone === 'ok' ? 'check' : 'info';
+  const fallback: IconName = tone === 'warn' || tone === 'err' ? 'info' : tone === 'ok' ? 'check' : 'info';
   return (
     <div className={`banner${tone === 'info' ? '' : ` ${tone}`}`}>
       <Icon name={icon ?? fallback} />

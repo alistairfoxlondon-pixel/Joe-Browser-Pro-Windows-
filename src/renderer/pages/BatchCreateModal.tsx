@@ -137,7 +137,7 @@ export function BatchCreateModal({
         ) : null}
 
         {count > 200 ? (
-          <Banner tone="err" icon="warning">
+          <Banner tone="err" icon="info">
             {t('tools.batch.tooMany')}
           </Banner>
         ) : null}

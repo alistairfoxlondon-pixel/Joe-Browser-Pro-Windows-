@@ -34,7 +34,10 @@ for (const file of files) {
     target: 'node20',
     format: 'esm',
     jsx: 'automatic',
-    external: ['electron', 'ws', 'jsdom', 'react', 'react-dom', 'bufferutil', 'utf-8-validate'],
+    // MUI pulls in CJS chunks whose `require('react')` cannot be shimmed in ESM output, so every
+    // package stays external and Node resolves it at runtime: ESM imports CJS react-transition-
+    // group through the standard interop, which keeps exactly one copy of React alive.
+    packages: 'external',
     define: { 'process.env.NODE_ENV': '"test"' },
     logLevel: 'warning',
   });
