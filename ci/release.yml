@@ -29,11 +29,31 @@ jobs:
 
       - run: npm ci
 
-      # The gates the release depends on. If any of these fails, no artifact is published:
-      # typecheck both projects, the whole suite, and a production build.
+      # The gates the release depends on. If any of these fails, nothing is packaged or published.
       - run: npm run typecheck
-      - run: npm test
+
+      # Build before test. Some of the contract tests inspect the build output - they check that
+      # package.json's `main`, the preload and the renderer HTML are the files the build actually
+      # emits - so running the suite first asked them a question about a folder that did not
+      # exist yet. They are written to build for themselves when it is missing, but doing it in
+      # this order means the suite tests the same artifacts that get shipped.
       - run: npm run build
+
+      - name: Run the tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.txt
+
+      # The job log is served from a storage host that the machine dispatching these runs cannot
+      # always reach, so the failing assertions are also emitted as an annotation, which the
+      # check-runs API serves directly.
+      - name: Show the failure
+        if: failure()
+        shell: bash
+        run: |
+          detail=$(grep -nE "not ok|AssertionError|Expected|actual:|expected:|Error:" test-output.txt | head -40 || true)
+          echo "::error title=TEST OUTPUT::$(printf '%s' "$detail" | tr '\n' '|' | cut -c1-6000)"
 
       - name: Read the version
         id: meta
