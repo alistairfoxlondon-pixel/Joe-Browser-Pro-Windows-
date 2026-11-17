@@ -9,7 +9,7 @@ binaries, and attaches them to a GitHub release. It has produced a working relea
 The live workflow at `.github/workflows/release.yml` still hard-codes `tag_name: v2.0.0`. A second
 dispatch would therefore overwrite the `v2.0.0` release instead of creating `v2.1.0`.
 
-The corrected workflow is **already written** at `release/ci/release.yml`. It cannot be moved into
+The corrected workflow is **already written** at `ci/release.yml`. It cannot be moved into
 place from an automated session: the GitHub App that pushes this repository has `contents: write`
 but not the separate **`workflows`** permission, so any push or API write touching
 `.github/workflows/` is refused with
@@ -24,7 +24,7 @@ files; every other file in this repository pushes normally.
 
 **The one-minute fix, for a human with the repository open:**
 
-1. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/release/ci/release.yml
+1. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/ci/release.yml
 2. Copy the file's contents.
 3. Open https://github.com/pritamsarkar711/Joe-Browser-Pro-Windows-/blob/main/.github/workflows/release.yml
 4. Replace its contents, commit to `main`.

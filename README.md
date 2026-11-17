@@ -121,7 +121,9 @@ Actions -> Build EXE -> Run workflow
 ```
 
 The tag comes from `package.json` unless one is given, so a new version is released by bumping the
-version and running the workflow — nothing in the file has to be edited. Typecheck, the whole test
+version and running the workflow. **The live file still pins `v2.0.0`**; the corrected version is
+staged at `ci/release.yml` and needs one manual copy. See [RELEASE.md](RELEASE.md) for why it
+cannot be moved automatically and the one-minute step to do it. Typecheck, the whole test
 suite and a production build all have to pass before anything is packaged, and the run fails if
 either binary is missing rather than publishing a release with no assets.
 
