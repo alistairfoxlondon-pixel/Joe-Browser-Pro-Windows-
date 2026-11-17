@@ -5,15 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
-/**
- * The installed-application test.
- *
- * The packaged installer is what users actually get, so this is what gets proven before a release
- * ships: install to a custom folder, complete the first-run choice (continue locally - the free,
- * no-account path, deliberately avoiding any network traffic to the licensing backend), restart
- * and expect the same destination again, walk every page, then uninstall and confirm the user's
- * data survives.
- */
+/** Test the packaged installer and account gate without bypassing authentication. */
 
 if (process.platform !== 'win32') throw new Error('Run this packaged installer test on Windows.');
 const root = await mkdtemp(path.join(tmpdir(), 'joe-installer-test-'));
@@ -29,11 +21,12 @@ async function launch() {
   await page.waitForLoadState('domcontentloaded');
   return page;
 }
-async function workspace(page) {
-  await page.locator('.shell .nav-item').first().waitFor();
-  assert.equal(await page.locator('.nav-item').count(), 8);
+async function accountGate(page) {
+  await page.locator('.gate input[type=email]').waitFor();
+  assert.equal(await page.locator('.gate-skip').count(), 0, 'Account sign-in must be required');
   assert.equal(await page.locator('.recovery').count(), 0, `Renderer recovery: ${await page.locator('body').innerText()}; errors: ${errors.join(' | ')}`);
 }
+
 try {
   console.log('Installing to', destination);
   // NSIS /D must be the final argument and must not be quoted, even with spaces.
@@ -41,21 +34,12 @@ try {
   await access(executablePath);
   console.log('Launching installed application');
   let page = await launch();
-  console.log('Continuing without an account (local, free plan)');
-  await page.locator('.gate-skip').click();
-  await workspace(page);
-  // The choice is remembered: reopening must not demand the gate again.
-  const remembered = await page.evaluate(() => localStorage.getItem('joe-local-mode'));
-  assert.equal(remembered, '1', 'the local-mode choice was not persisted');
+  await accountGate(page);
+  // Legacy local-mode choice must not bypass the account gate after upgrading.
+  await page.evaluate(() => localStorage.setItem('joe-local-mode', '1'));
   await app.close(); app = null;
   page = await launch();
-  await workspace(page);
-  // Visit every destination with an empty, real on-disk workspace (not sample data).
-  for (let i = 0; i < 8; i++) {
-    await page.locator('.nav-item').nth(i).click();
-    await page.waitForTimeout(200);
-    assert.equal(await page.locator('.recovery').count(), 0, `Renderer recovery: ${await page.locator('body').innerText()}; errors: ${errors.join(' | ')}`);
-  }
+  await accountGate(page);
   assert.deepEqual(errors, []);
   await app.close(); app = null;
   const uninstaller = path.join(destination, 'Uninstall Joe Browser.exe');
@@ -65,7 +49,7 @@ try {
   // Uninstall must preserve user data.
   await access(data);
   await access(path.join(data, 'profiles'));
-  console.log('PASS: custom-directory install, local-mode first run, restart, all pages, uninstall.');
+  console.log('PASS: custom-directory install, account gate, restart, and uninstall.');
 } catch (error) {
   const detail = String(error?.stack || error).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
   console.log(`::error title=Windows installed smoke test::${detail}`);

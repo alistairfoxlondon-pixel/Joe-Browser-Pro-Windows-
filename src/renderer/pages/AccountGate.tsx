@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { cloud, type CloudUser } from '../cloud/client';
 import { Logo } from '../components/Brand';
-import { Icon } from '../components/Icon';
 import { Banner, Button, Field, Segmented } from '../components/UI';
 import { messageOf } from '../util';
 
@@ -17,7 +16,7 @@ import { messageOf } from '../util';
 export function AccountGate({
   onDone,
 }: {
-  onDone: (user: CloudUser | null) => void | Promise<void>;
+  onDone: (user: CloudUser) => void | Promise<void>;
 }): ReactNode {
   const [mode, setMode] = useState<'signin' | 'register'>('signin');
   const [email, setEmail] = useState('');
@@ -67,18 +66,14 @@ export function AccountGate({
             </div>
           </div>
 
-          <ul className="gate-points">
-            <li><span className="gate-point-icon"><Icon name="fingerprint" size={17} /></span><span><b>One identity per profile</b><span>Fingerprint, timezone and proxy stay in agreement.</span></span></li>
-            <li><span className="gate-point-icon"><Icon name="layers" size={17} /></span><span><b>Unlimited profiles</b><span>Trial and premium plans. No caps, no queue.</span></span></li>
-            <li><span className="gate-point-icon"><Icon name="lock" size={17} /></span><span><b>Your data stays yours</b><span>Profiles live on this PC. Nothing is sent anywhere.</span></span></li>
-          </ul>
+
         </div>
       </div>
 
       <div className="gate-form">
         <div className="gate-form-inner">
           <h1 className="gate-title">{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
-          <p className="gate-sub">{mode === 'register' ? 'Confirm your email to start your 7-day trial.' : 'Sign in to manage your subscription.'}</p>
+          {mode === 'register' ? <p className="gate-sub">Confirm your email to continue.</p> : null}
 
           <div className="gate-tabs">
             <Segmented<'signin' | 'register'>
@@ -135,9 +130,7 @@ export function AccountGate({
             </Button>
           </form>
 
-          <button className="gate-skip" type="button" onClick={() => void onDone(null)}>
-            Continue without an account <span className="muted">— free plan, 1 profile</span>
-          </button>
+
         </div>
       </div>
     </div>

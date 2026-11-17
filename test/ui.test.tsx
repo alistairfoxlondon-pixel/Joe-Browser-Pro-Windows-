@@ -485,7 +485,7 @@ test('every interactive control carries a name a person can hear', async () => {
 
 /* ------------------------------------------------------------------ the gate */
 
-test('the gate renders and can be dismissed', async () => {
+test('the gate requires an account', async () => {
   signOutCloud();
   const settings = await mockBridge.getSettings();
 
@@ -497,11 +497,7 @@ test('the gate renders and can be dismissed', async () => {
     body.toLowerCase().includes('create an account') || body.toLowerCase().includes('sign in'),
     'the gate offers no way in',
   );
-  // The gate has to be escapable: a first-run window with no way past it is a hostage.
-  assert.ok(
-    body.toLowerCase().includes('without an account'),
-    'the gate offers no way to skip it',
-  );
+  assert.equal(container.querySelector('.gate-skip'), null, 'local mode must not be offered');
   assert.deepEqual(problems, [], `AccountGate: ${problems.join(' | ')}`);
 
   // The security panel owns its local identity; with the mock bridge's local account present the
@@ -694,6 +690,7 @@ test('registration enters an empty workspace and a remembered account survives r
   mockBridge.listProfiles = async () => [];
   mockBridge.listAccounts = async () => [];
   signOutCloud();
+  win.localStorage.setItem('joe-local-mode', '1');
   const originalSignUp = fakeCloud.signUp.bind(fakeCloud);
   fakeCloud.signUp = async (email: string) => {
     registered = true;

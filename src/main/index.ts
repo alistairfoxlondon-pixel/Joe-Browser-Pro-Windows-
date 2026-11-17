@@ -168,8 +168,8 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: settings.winWidth || 1320,
     height: settings.winHeight || 860,
-    minWidth: 900,
-    minHeight: 620,
+    minWidth: 480,
+    minHeight: 540,
     show: false,
     icon: nativeImage.createFromDataURL(__TRAY_ICON__),
     backgroundColor: settings.theme === 'light' ? '#f6f7fa' : '#0e1014',

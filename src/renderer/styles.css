@@ -16,11 +16,11 @@
   --font: 'Inter', sans-serif;
   --mono: var(--font);
 
-  --r-xs: 4px;
-  --r-sm: 6px;
-  --r: 8px;
-  --r-lg: 12px;
-  --r-xl: 16px;
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r: 6px;
+  --r-lg: 8px;
+  --r-xl: 10px;
 
   /* A four-step neutral ramp. The window sits on the lowest step, a card one above it, an input
      above that. Steps are 6-9 values apart: the smallest difference that still separates two
@@ -62,7 +62,7 @@
   --shadow-lg: 0 26px 60px -12px rgba(0, 0, 0, 0.72);
   --shadow-pop: 0 16px 40px -8px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--line-strong);
 
-  --rail: 256px;
+  --rail: 224px;
   --rail-narrow: 68px;
   --header: 68px;
   --titlebar: 38px;
@@ -1136,24 +1136,10 @@ p {
   min-height: 214px;
 }
 
-.profile::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 2px;
-  background: var(--accent);
-  opacity: 0;
-  transition: opacity var(--med) var(--ease);
-}
-
 .profile:hover {
   border-color: var(--line-strong);
   background: var(--panel-2);
   box-shadow: var(--shadow);
-}
-
-.profile:hover::before {
-  opacity: 1;
 }
 
 .profile.selected {
@@ -1161,17 +1147,8 @@ p {
   background: color-mix(in srgb, var(--accent-soft) 40%, var(--panel));
 }
 
-.profile.selected::before {
-  opacity: 1;
-}
-
 .profile.running {
   border-color: color-mix(in srgb, var(--ok) 34%, var(--line));
-}
-
-.profile.running::before {
-  background: var(--ok);
-  opacity: 1;
 }
 
 .profile-top {
@@ -3018,3 +2995,31 @@ p {
 /* Compact extension manager */
 .ext-state { margin-left: 8px; color: var(--text-3); font-size: 12px; font-weight: 400; }
 .ext-empty { padding: 14px 0; color: var(--text-3); font-size: 13px; }
+
+/* Compact surfaces and responsive controls, following the reference dashboard's 8px rhythm. */
+.titlebar { padding-right: 132px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.header { background: var(--panel); padding-top: 14px; padding-bottom: 14px; }
+.header h1 { font-size: 18px; }
+.content { padding-top: 16px; padding-bottom: 24px; }
+.rail { background: var(--bg-2); }
+.brand { padding-bottom: 12px; }
+.about-name { font-size: 19px; font-weight: 700; }
+.profile-foot .num { display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 760px) {
+  .header-actions { gap: 6px; }
+  .header-actions .btn { flex: 0 1 auto; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); }
+  .scrim { padding: 12px; }
+  .modal { max-height: calc(100vh - 24px); }
+  .row { flex-wrap: wrap; }
+  .row-main { flex: 1 1 130px; }
+  .row-actions { flex-wrap: wrap; }
+}
+@media (max-width: 520px) {
+  .titlebar .crumb span, .titlebar .crumb > svg { display: none; }
+  .content { padding-left: 12px; padding-right: 12px; }
+  .header { padding-left: 12px; padding-right: 12px; }
+}
+
+.gate-title { margin-bottom: 18px; }
+.gate-title + .gate-sub { margin-top: -12px; }

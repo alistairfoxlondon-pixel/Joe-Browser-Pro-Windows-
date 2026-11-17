@@ -5,8 +5,8 @@ export const INCLUDED_EXTENSIONS = [
 ];
 
 export const RECOMMENDED_EXTENSIONS = [
-  { name: 'uBlock Origin Lite', url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh', icon: './brand/ublock-origin-lite.png' },
-  { name: 'Bitwarden', url: 'https://chromewebstore.google.com/detail/bitwarden-free-password-m/nngceckbapebfimnlniiiahkandclblb', icon: './brand/bitwarden.png' },
+  { name: 'SingleFile', url: 'https://chromewebstore.google.com/detail/singlefile/mpiodijhokgodhhofbcjdecpffjipkle', icon: './brand/singlefile.png' },
+  { name: 'Consent-O-Matic', url: 'https://chromewebstore.google.com/detail/consent-o-matic/mdjildafknihdffpkfmmpnpoiajfjnjd', icon: './brand/consent-o-matic.png' },
   { name: 'Dark Reader', url: 'https://chromewebstore.google.com/detail/dark-reader/eimadpbcbfnmbkopoojfekhnkhdbieeh', icon: './brand/dark-reader.png' },
   { name: 'Cookie-Editor', url: 'https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm', icon: './brand/cookie-editor.png' },
   { name: 'Wappalyzer', url: 'https://chromewebstore.google.com/detail/wappalyzer-technology-pro/gppongmhjkpfnbhagpmjfkannfbllamg', icon: './brand/wappalyzer.png' },

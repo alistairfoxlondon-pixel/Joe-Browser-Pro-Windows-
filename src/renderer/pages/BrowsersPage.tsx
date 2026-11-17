@@ -3,6 +3,7 @@ import type { AppSettings, DetectedBrowser, KernelBuild, SystemInfo } from '../.
 import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
+import { BrowserLogo } from '../components/BrowserLogo';
 import { Banner, Button, Chip, EmptyState, Field, Stat, Toggle, useConfirm, useToast } from '../components/UI';
 import { messageOf } from '../util';
 
@@ -154,7 +155,7 @@ export function BrowsersPage({
               {browsers.map((browser) => (
                 <div className="row" key={browser.path}>
                   <div className="row-icon" style={{ background: 'var(--accent-soft)', color: 'var(--accent-hi)' }}>
-                    <Icon name="browsers" />
+                    <BrowserLogo engine={browser.engine} />
                   </div>
                   <div className="row-main">
                     <div className="row-title">
@@ -188,7 +189,7 @@ export function BrowsersPage({
               {installed.map((kernel) => (
                 <div className="row" key={kernel.id}>
                   <div className="row-icon" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>
-                    <Icon name="layers" />
+                    <BrowserLogo engine={kernel.engine} />
                   </div>
                   <div className="row-main">
                     <div className="row-title">
@@ -218,7 +219,7 @@ export function BrowsersPage({
                   .map((kernel) => (
                     <div className="row" key={kernel.id}>
                       <div className="row-icon">
-                        <Icon name="download" />
+                        <BrowserLogo engine={kernel.engine} />
                       </div>
                       <div className="row-main">
                         <div className="row-title">

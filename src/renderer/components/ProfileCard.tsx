@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ProfileSummary, SessionInfo } from '../../shared/types';
 import { Icon } from './Icon';
+import { BrowserLogo } from './BrowserLogo';
 import { Button, Chip, IconButton, Menu, clock, when, type MenuAction } from './UI';
 import { useI18n } from '../i18n';
 
@@ -81,11 +82,7 @@ export function ProfileCard({
         <div className="profile-title">
           <div className="profile-name" title={profile.name}>
             <span className="truncate">{profile.name}</span>
-            {profile.freshSession ? (
-              <span className="lock" title={t('ed.fresh')}>
-                <Icon name="refresh" size={14} />
-              </span>
-            ) : null}
+
           </div>
           <div className="profile-meta">
             {profile.group ? (
@@ -187,7 +184,7 @@ export function ProfileCard({
         </span>
 
         <span className="faint num" style={{ fontSize: 11.5 }} title={`${profile.browserVersion} · ${ENGINE_LABEL[profile.engine] ?? profile.engine}`}>
-          {ENGINE_LABEL[profile.engine] ?? profile.engine} {profile.browserVersion.split('.')[0]}
+          <BrowserLogo engine={profile.engine} size={14} /> {ENGINE_LABEL[profile.engine] ?? profile.engine} {profile.browserVersion.split('.')[0]}
         </span>
 
         <div className="spacer" />

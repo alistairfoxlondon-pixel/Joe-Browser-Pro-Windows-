@@ -46,7 +46,7 @@ export function SubscriptionProvider({ user, children }: { user: CloudUser | nul
 
   const refresh = useCallback(async () => {
     const sequence = ++requestSequence.current;
-    // A window with no account has nothing to ask the server about: local mode is the free plan,
+    // No account means there is no subscription to query.
     // and an RPC with no JWT would only spend a round trip to be told so.
     if (!user) {
       setEntitlement(null);

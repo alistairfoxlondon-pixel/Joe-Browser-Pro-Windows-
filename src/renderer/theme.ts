@@ -11,7 +11,7 @@ import { createTheme } from '@mui/material/styles';
 export const PRIMARY = '#2f6bde';
 
 const shared = {
-  shape: { borderRadius: 8 },
+  shape: { borderRadius: 6 },
   spacing: 8,
   typography: {
     fontFamily: `'Inter', sans-serif`,

@@ -26,9 +26,9 @@ async function main(): Promise<void> {
       assert.ok(manifest.key, 'The verified publisher key was not preserved');
     }
     console.log('Installing a signed Chrome Web Store package');
-    const url = 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh';
+    const url = 'https://chromewebstore.google.com/detail/singlefile/mpiodijhokgodhhofbcjdecpffjipkle';
     const extension = await addFromUrl(url);
-    assert.equal(extension.item?.storeId, 'ddkjiahejlhfcafbddmgiahcphecmpfh');
+    assert.equal(extension.item?.storeId, 'mpiodijhokgodhhofbcjdecpffjipkle');
     assert.ok(fs.existsSync(path.join(extension.item!.folder, 'manifest.json')));
     console.log('Downloading an app-managed Chrome for Testing build');
     const builds = await listKernels(true);

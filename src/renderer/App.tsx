@@ -74,27 +74,8 @@ export function App(): ReactNode {
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState('');
   const [narrow, setNarrow] = useState(false);
-  // undefined = still restoring the stored session; null = signed out / local mode; user = signed in.
+  // undefined while restoring; null means authentication is required.
   const [authUser, setAuthUser] = useState<CloudUser | null | undefined>(undefined);
-  // The “continue without an account” choice is remembered, exactly like the theme: reopening the
-  // app must not demand the gate every single launch. Any explicit transition to the gate clears
-  // the flag, so choosing to sign in is honoured the next time the window opens.
-  const [localMode, setLocalMode] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('joe-local-mode') === '1';
-    } catch {
-      return false;
-    }
-  });
-  const persistLocalMode = useCallback((value: boolean) => {
-    setLocalMode(value);
-    try {
-      if (value) localStorage.setItem('joe-local-mode', '1');
-      else localStorage.removeItem('joe-local-mode');
-    } catch {
-      /* private mode */
-    }
-  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -261,7 +242,7 @@ export function App(): ReactNode {
 
   const running = sessions.length;
   const signedIn = authUser !== null && authUser !== undefined;
-  const gateAnswered = authUser !== undefined && (signedIn || localMode);
+  const gateAnswered = signedIn;
 
   // While the session is restored, hold a neutral splash: no shell paint, no gate flash.
   if (authUser === undefined || (settings === null && !failure)) {
@@ -276,17 +257,7 @@ export function App(): ReactNode {
     return (
       <I18nProvider language={settings?.language ?? 'en'} onChange={(language) => void saveSettings({ language })}>
         <ToastProvider>
-          <AccountGate
-            onDone={async (user) => {
-              if (user) {
-                setAuthUser(user);
-                persistLocalMode(false);
-              } else {
-                // Local mode: the free plan, one profile, sign-in always available in Settings.
-                persistLocalMode(true);
-              }
-            }}
-          />
+          <AccountGate onDone={setAuthUser} />
         </ToastProvider>
       </I18nProvider>
     );
@@ -302,7 +273,6 @@ export function App(): ReactNode {
           <SubscriptionGuard onSignOut={async () => {
             await cloud().signOut();
             setAuthUser(null);
-            persistLocalMode(false);
             setPage('profiles');
           }}>
           <div className={`shell${narrow ? ' narrow' : ''}`}>
@@ -319,15 +289,14 @@ export function App(): ReactNode {
                   ? async () => {
                       await cloud().signOut();
                       setAuthUser(null);
-                      persistLocalMode(false);
-                      setPage('profiles');
+                                setPage('profiles');
                     }
                   : undefined
               }
             />
 
             <main className="main">
-              <TitleBar page={page} running={running} theme={settings?.theme ?? 'dark'} onTheme={(next) => void saveSettings({ theme: next })} signedIn={signedIn} onSignIn={() => persistLocalMode(false)} onOpenSettings={() => setPage('settings')} />
+              <TitleBar page={page} theme={settings?.theme ?? 'dark'} onTheme={(next) => void saveSettings({ theme: next })} onOpenSettings={() => setPage('settings')} />
               {failure ? (
                 <div style={{ padding: '12px 26px 0' }}>
                   <FailureBanner message={failure} onRetry={() => setStartupAttempt((value) => value + 1)} />
@@ -351,8 +320,7 @@ export function App(): ReactNode {
                 saveSettings={saveSettings}
                 onSignedOut={() => {
                   setAuthUser(null);
-                  persistLocalMode(false);
-                }}
+                      }}
               />
             )}
           </main>
@@ -431,7 +399,6 @@ function Rail({
         <Logo size={narrow ? 34 : 36} />
         <div className="brand-text">
           <div className="brand-name">{t('app.title')}</div>
-          <div className="brand-sub">{t('app.tagline')}</div>
         </div>
       </div>
 
@@ -477,19 +444,13 @@ function Rail({
 
 function TitleBar({
   page,
-  running,
   theme,
   onTheme,
-  signedIn,
-  onSignIn,
   onOpenSettings,
 }: {
   page: Page;
-  running: number;
   theme: 'dark' | 'light';
   onTheme: (next: 'dark' | 'light') => void;
-  signedIn: boolean;
-  onSignIn: () => void;
   onOpenSettings: () => void;
 }): ReactNode {
   const { t } = useI18n();
@@ -510,13 +471,11 @@ function TitleBar({
       <button
         type="button"
         className={`tier-chip${tier === 'premium' ? ' premium' : tier === 'trial' ? ' trial' : ''}`}
-        onClick={signedIn ? onOpenSettings : onSignIn}
-        title={signedIn ? 'Subscription details' : 'Sign in to activate a license'}
+        onClick={onOpenSettings}
+        title="Subscription details"
         style={{ marginRight: 12 }}
       >
-        {!signedIn
-          ? 'Local mode'
-          : tier === 'premium'
+        {tier === 'premium'
             ? subscription.entitlement?.isAdmin
               ? 'Admin'
               : 'Premium'
@@ -525,14 +484,7 @@ function TitleBar({
               : 'Free plan'}
       </button>
       <ThemeToggle theme={theme} onChange={onTheme} />
-      <div className="live-dot" style={{ marginRight: 118, marginLeft: 12 }}>
-        <span className={`dot${running > 0 ? ' on' : ''}`} />
-        {running > 0
-          ? running === 1
-            ? t('footer.browsers.one')
-            : t('footer.browsers').replace('{n}', String(running))
-          : t('footer.local')}
-      </div>
+
     </div>
   );
 }

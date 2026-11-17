@@ -1,8 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 96">
-  <g transform="translate(4 4) scale(1.375)">
-    <rect x="2" y="2" width="60" height="60" rx="11" fill="#2f6bde"/>
-    <circle cx="32" cy="32" r="21" fill="none" stroke="#fff" stroke-width="3"/>
-    <path d="M29 21h12M37 21v16a8 8 0 0 1-16 0" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
-  <text x="112" y="56" font-family="'Fira Sans','Segoe UI',system-ui,sans-serif" font-size="32" font-weight="700" fill="#0f1420">Joe Browser</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96">
+  <g transform="translate(4 4) scale(1.375)"><rect x="2" y="2" width="60" height="60" rx="9" fill="#2f6bde"/><path d="M17 29v-7a5 5 0 0 1 5-5h20a5 5 0 0 1 5 5v7" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/><path d="M38 27v12a10 10 0 0 1-20 0" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round"/><circle cx="38" cy="20" r="2.1" fill="#fff"/></g>
+  <text x="112" y="59" font-family="Inter,sans-serif" font-size="32" font-weight="700" fill="#0f1420">Joe Browser</text>
 </svg>
