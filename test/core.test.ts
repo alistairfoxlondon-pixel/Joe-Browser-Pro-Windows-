@@ -810,7 +810,7 @@ test('managed build assignment and duplication never cross browser engines', asy
     assert.ok(duplicate.kernelId.startsWith('chrome-'));
     assert.notEqual(source.kernelId, duplicate.kernelId);
     // A fresh cache with an unrelated entry must not hide older installed versions.
-    fs.writeFileSync(Paths.storeFile('catalog.json'), JSON.stringify({ fetchedAt: Date.now(), builds: [{ id: 'other', engine: 'chrome', version: '9', channel: 'stable', os: '', downloadUrl: '', installed: false, path: '', sizeBytes: 0 }] }));
+    fs.writeFileSync(Paths.storeFile('catalog.json'), JSON.stringify({ schemaVersion: 2, fetchedAt: Date.now(), builds: [{ id: 'other', engine: 'chrome', version: '9', channel: 'stable', os: '', downloadUrl: '', installed: false, path: '', sizeBytes: 0 }] }));
     const listed = await listKernels();
     for (const id of ids) assert.ok(listed.some((build) => build.id === id && build.installed));
   } finally {

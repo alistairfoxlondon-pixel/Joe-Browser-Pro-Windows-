@@ -32,6 +32,7 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAJORS_TO_KEEP = 8;
 
 interface CacheShape {
+  schemaVersion?: number;
   fetchedAt: number;
   builds: KernelBuild[];
 }
@@ -285,11 +286,12 @@ export function installedKernels(): InstalledKernel[] {
 
 export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> {
   const cache = readJson<CacheShape>(CACHE_FILE(), { fetchedAt: 0, builds: [] });
-  const fresh = Date.now() - cache.fetchedAt < CACHE_TTL_MS;
+  const fresh = cache.schemaVersion === 2 && Date.now() - cache.fetchedAt < CACHE_TTL_MS;
 
   // Discard legacy entries with a fabricated archive URL, including old cached results.
   let builds = cache.builds.filter((build) =>
-    build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev'),
+    (build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev')) &&
+    (cache.schemaVersion === 2 || build.engine !== 'brave'),
   );
   const installed = installedIndex();
 
@@ -304,7 +306,7 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
 
     if (gathered.length > 0) {
       builds = gathered;
-      writeJson(CACHE_FILE(), { fetchedAt: Date.now(), builds } satisfies CacheShape);
+      writeJson(CACHE_FILE(), { schemaVersion: 2, fetchedAt: Date.now(), builds } satisfies CacheShape);
     } else if (builds.length === 0 && installed.size === 0) {
       throw new Error(
         'The browser catalog could not be reached. Check the connection and try again - ' +
