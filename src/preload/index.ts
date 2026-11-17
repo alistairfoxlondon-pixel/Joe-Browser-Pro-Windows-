@@ -162,5 +162,7 @@ const events = {
 
 };
 
-contextBridge.exposeInMainWorld('joe', bridge);
+// Bridge.on is part of the public API too; exposing it only on joeEvents made
+// desktop-only effects crash even though the browser preview worked.
+contextBridge.exposeInMainWorld('joe', { ...bridge, on: events.on });
 contextBridge.exposeInMainWorld('joeEvents', events);

@@ -7,6 +7,8 @@
   all-users installs and retain destination selection, shortcuts, uninstall and finish/launch.
 - Simplify registration/sign-in screens and improve their vertical spacing.
 - State clearly that local registration needs no email verification; no cloud auth is used.
+- Fix a desktop-only Extensions page crash: expose the event subscription on the real preload
+  bridge as promised by its interface; test the built preload API, not only source patterns.
 - Await the registration-to-workspace transition so IPC failures stay visible in the form.
 - Retry the full startup sequence after initialization failures instead of retrying only profiles.
 - Add an actionable render-error recovery screen rather than leaving a blank window.

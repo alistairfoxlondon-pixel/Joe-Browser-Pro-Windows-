@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { AppSettings, ExtensionItem, ExtensionReport } from '../../shared/types';
-import { bridge } from '../bridge';
+import { bridge, onEvent } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
 import { Button, Chip, EmptyState, Toggle, useConfirm, useToast } from '../components/UI';
@@ -47,7 +47,7 @@ export function ExtensionsPage({
     void load();
   }, [load]);
 
-  useEffect(() => bridge().on('extensions:changed', () => void load()), [load]);
+  useEffect(() => onEvent('extensions:changed', () => void load()), [load]);
 
   const act = async (label: string, work: () => Promise<unknown>, success?: string) => {
     setBusy(label);
