@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, Tray, ipcMain, nativeImage, nativeTheme, shell } from 'electron';
 import path from 'node:path';
 import { Paths } from './core/paths';
 import { registerIpc } from './ipc';
@@ -30,9 +30,28 @@ const sessions = new SessionManager({
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('toast', { kind: 'warn', message, detail });
     }
-    if (tray && detail) {
+    if (tray) {
       // A proxy watch that fires while the window is hidden has to be visible from the tray.
       tray.setToolTip(`Joe Browser - ${message}`);
+    }
+    // The tooltip is not enough: it only shows when the pointer is already on the tray icon.
+    // A native notification is what the original's balloon alerts were for - a rotation, a proxy
+    // that stopped answering, a proxy that came back - and it is the only one of the three that
+    // reaches a user who is looking at another window.
+    // The original showed a balloon for every toast, not only the ones raised in the
+    // background, so the alert survives a window that is hidden or covered.
+    if (Notification.isSupported()) {
+      try {
+        const notice = new Notification({ title: message, body: detail || '', silent: false });
+        notice.on('click', () => {
+          if (!mainWindow) return;
+          mainWindow.show();
+          mainWindow.focus();
+        });
+        notice.show();
+      } catch (error) {
+        log.error('cannot show a notification', error);
+      }
     }
   },
 });

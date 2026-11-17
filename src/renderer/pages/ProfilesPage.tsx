@@ -218,10 +218,128 @@ export function ProfilesPage({
     [run, refresh],
   );
 
+  /**
+   * Arrow-key navigation over the card grid.
+   *
+   * The original moved focus between cards with the arrow keys, because a person who is opening
+   * ten profiles in a row should not have to move the mouse ten times. A flat grid has no idea
+   * where its columns are, so the column count is measured from the rendered card positions
+   * rather than guessed from a CSS variable - at 1400 px there are more columns than at 900 px.
+   *
+   * Focus is tracked as an id, not as `document.activeElement`, so it survives a re-render of the
+   * list when a profile's running state changes under it.
+   */
+  const [focusId, setFocusId] = useState<string | null>(null);
+
+  const focusCard = useCallback((id: string | null) => {
+    setFocusId(id);
+    if (!id) return;
+    // The card is focusable with tabIndex -1 so it takes focus without joining the tab order;
+    // Tab still walks the real controls inside it.
+    requestAnimationFrame(() => {
+      const element = document.querySelector<HTMLElement>(`[data-profile-card="${CSS.escape(id)}"]`);
+      element?.focus();
+      element?.scrollIntoView({ block: 'nearest' });
+    });
+  }, []);
+
+  const columnsIn = useCallback((container: HTMLElement): number => {
+    const cards = Array.from(container.querySelectorAll<HTMLElement>('[data-profile-card]'));
+    if (cards.length === 0) return 1;
+    const firstTop = cards[0]!.getBoundingClientRect().top;
+    let count = 0;
+    for (const card of cards) {
+      if (Math.abs(card.getBoundingClientRect().top - firstTop) > 4) break;
+      count++;
+    }
+    return Math.max(1, count);
+  }, []);
+
   const edit = useCallback(async (profile: ProfileSummary) => {
     const full = await bridge().getProfile(profile.id);
     if (full) setEditing(full);
   }, []);
+
+  useEffect(() => {
+    /**
+     * The keys the original handled in ProcessCmdKey, for the page that owns the cards.
+     *
+     * These are page-scoped on purpose: Ctrl+A in a text field must still select the text, and
+     * the arrow keys inside the search box must still move the caret. The handler bails out for
+     * anything typed into a field.
+     */
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable === true
+      ) {
+        return;
+      }
+      const mod = event.ctrlKey || event.metaKey;
+      const order = Array.from(document.querySelectorAll<HTMLElement>('[data-profile-card]')).map(
+        (element) => element.dataset['profileCard'] ?? '',
+      );
+      if (order.length === 0) return;
+
+      // Ctrl+O cycles the sort, matching the original's CycleSort.
+      if (mod && !event.shiftKey && event.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        const index = SORT_MODES.findIndex((mode) => mode.id === settings.sortBy);
+        const next = SORT_MODES[(index + 1) % SORT_MODES.length]!;
+        void saveSettings({ sortBy: next.id });
+        return;
+      }
+      // Ctrl+A selects every visible profile, the same as the bulk bar's "All".
+      if (mod && !event.shiftKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        setSelected(new Set(visible.map((profile) => profile.id)));
+        return;
+      }
+      if (event.key === 'F2' && focusId) {
+        event.preventDefault();
+        const profile = profiles.find((entry) => entry.id === focusId);
+        if (profile) void edit(profile);
+        return;
+      }
+      // Shift+F10 opens the focused card's menu. Most laptops have no Apps key.
+      if (event.shiftKey && event.key === 'F10' && focusId) {
+        event.preventDefault();
+        document.querySelector<HTMLElement>(`[data-profile-card="${CSS.escape(focusId)}"] .icon-btn`)?.click();
+        return;
+      }
+      if (event.key === 'Enter' && focusId) {
+        event.preventDefault();
+        const profile = profiles.find((entry) => entry.id === focusId);
+        if (profile) void open(profile);
+        return;
+      }
+
+      const step: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 0, ArrowUp: 0 };
+      if (!(event.key in step)) return;
+      event.preventDefault();
+
+      const current = focusId && order.includes(focusId) ? order.indexOf(focusId) : -1;
+      const container = document.querySelector<HTMLElement>('.grid');
+      const columns = container ? columnsIn(container) : 1;
+
+      if (current < 0) {
+        focusCard(order[0] ?? null);
+        return;
+      }
+      let next = current;
+      if (event.key === 'ArrowRight') next = Math.min(order.length - 1, current + 1);
+      if (event.key === 'ArrowLeft') next = Math.max(0, current - 1);
+      if (event.key === 'ArrowDown') next = Math.min(order.length - 1, current + columns);
+      if (event.key === 'ArrowUp') next = Math.max(0, current - columns);
+      focusCard(order[next] ?? null);
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [profiles, visible, settings.sortBy, saveSettings, focusId, focusCard, columnsIn, open, edit]);
 
   const remove = useCallback(
     async (profile: ProfileSummary) => {

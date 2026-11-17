@@ -566,3 +566,25 @@ test('a full disk is recognised from every shape the error arrives in', () => {
   assert.equal(disk.isDiskFull(null), false);
   assert.equal(disk.isDiskFull(undefined), false);
 });
+
+/* ------------------------------------------------------------------ pasted proxy lists */
+
+test('a pasted proxy list is parsed the same way the library parses it', () => {
+  const http = parseProxyLine('http://user:secret@10.0.0.4:8080');
+  assert.ok(http, 'a full http line did not parse');
+  assert.equal(http!.host, '10.0.0.4');
+  assert.equal(http!.port, 8080);
+  assert.equal(http!.type, 'http');
+
+  const socks = parseProxyLine('socks5://10.0.0.9:1080');
+  assert.ok(socks, 'a bare socks5 line did not parse');
+  assert.equal(socks!.type, 'socks5');
+
+  // A host:port pair with no scheme is the commonest paste of all and must not be rejected.
+  const bare = parseProxyLine('10.0.1.7:3128');
+  assert.ok(bare, 'a bare host:port line did not parse');
+  assert.equal(bare!.port, 3128);
+
+  assert.equal(parseProxyLine('not a proxy at all'), null);
+  assert.equal(parseProxyLine(''), null);
+});

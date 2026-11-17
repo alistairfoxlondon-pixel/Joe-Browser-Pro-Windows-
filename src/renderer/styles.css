@@ -2849,3 +2849,31 @@ p {
   font-size: 22px;
   box-shadow: var(--shadow-sm);
 }
+
+/* ------------------------------------------------------------------ card keyboard focus */
+
+/*
+ * A card reached with the arrow keys has to say so. `:focus-visible` alone is not enough here
+ * because the card is focused programmatically (tabIndex -1) and Chromium then treats it as a
+ * mouse focus, which would draw nothing at all - a user pressing Down would see the selection
+ * move but not where it went. The outline is drawn as a ring outside the card so it does not
+ * shift its own contents the way a border would.
+ */
+.profile:focus {
+  outline: none;
+}
+
+.profile:focus-visible,
+.profile:focus {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--accent),
+    var(--shadow-2, 0 8px 24px rgb(0 0 0 / 0.24));
+  z-index: 1;
+}
+
+/* The focused card also lifts very slightly, which reads as "this is the one that will open". */
+.profile:focus-visible .profile-name,
+.profile:focus .profile-name {
+  color: var(--text);
+}

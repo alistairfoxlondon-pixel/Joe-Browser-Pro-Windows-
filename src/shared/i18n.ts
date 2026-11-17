@@ -663,6 +663,12 @@ const EN: Table = {
   'about.f7.body': 'Import from the Chrome Web Store or an unpacked folder, plus three written for this app.',
   'about.f8': 'Leak protection',
   'about.f8.body': 'WebRTC, DNS and the clock stay behind the proxy, and the audit says so when one of them does not.',
+  'proxy.testline': 'Test {n} proxies',
+  'proxy.failing': '{n} failed',
+  'proxy.unreachable': 'The proxy did not answer.',
+  'proxy.lines': 'PROXIES · ONE PER LINE',
+  'proxy.lines.hint': 'Anything you paste here is checked and not saved. Save only the lines that answer.',
+  'proxy.paste.hint': 'Copy the working lines into Import to keep them.',
 };
 
 
@@ -1058,6 +1064,12 @@ const DE: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -1453,6 +1465,12 @@ const RU: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -1848,6 +1866,12 @@ const ES: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -2243,6 +2267,12 @@ const FR: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -2638,6 +2668,12 @@ const PT: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -3033,6 +3069,12 @@ const IT: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -3428,6 +3470,12 @@ const NL: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -3823,6 +3871,12 @@ const PL: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -4218,6 +4272,12 @@ const TR: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -4613,6 +4673,12 @@ const UK: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -5008,6 +5074,12 @@ const AR: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -5403,6 +5475,12 @@ const ZH: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -5798,6 +5876,12 @@ const JA: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 
@@ -6193,6 +6277,12 @@ const KO: Table = {
   'about.f7.body': '',
   'about.f8': '',
   'about.f8.body': '',
+  'proxy.testline': '',
+  'proxy.failing': '',
+  'proxy.unreachable': '',
+  'proxy.lines': '',
+  'proxy.lines.hint': '',
+  'proxy.paste.hint': '',
 };
 
 

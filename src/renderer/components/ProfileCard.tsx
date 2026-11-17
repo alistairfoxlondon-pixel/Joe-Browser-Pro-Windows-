@@ -57,6 +57,8 @@ export function ProfileCard({
   return (
     <article
       className={`card profile${running ? ' running' : ''}${selected ? ' selected' : ''}`}
+      data-profile-card={profile.id}
+      tabIndex={-1}
       onDoubleClick={onOpen}
       onClick={(event) => {
         // Clicking the card body opens; the controls inside stop their own propagation.

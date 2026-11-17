@@ -6,6 +6,7 @@ import net from 'node:net';
 import os from 'node:os';
 import type {
   NetworkReport,
+  ProxyBatchRow,
   ProxyCheckResult,
   ProxyConfig,
   ProxyEntry,
@@ -146,6 +147,68 @@ export function importLines(text: string): { added: number; failed: string[] } {
 
   persist(entries);
   return { added, failed };
+}
+
+/**
+ * Check a pasted list of proxies without saving any of them.
+ *
+ * The original had this as its own Tools tile, and it earns its place: buying a proxy list means
+ * pasting a hundred lines and finding out which ones answer before one is stored. Saving first
+ * would fill the library with dead entries that then get applied to profiles.
+ *
+ * It runs one at a time on purpose. Fifty tunnels opened at once saturate the local relay, and
+ * the latency figure of a proxy tested that way is a measurement of the queue, not the proxy.
+ */
+export async function testLines(text: string): Promise<ProxyBatchRow[]> {
+  const lines = text
+    .split(/[\r\n]+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#') && !line.startsWith('//'))
+    .slice(0, 200);
+
+  const rows: ProxyBatchRow[] = [];
+  for (const line of lines) {
+    const parsed = parseProxyLine(line);
+    if (!parsed || !parsed.host || !parsed.port) {
+      rows.push({
+        line: line.slice(0, 120),
+        host: '',
+        port: 0,
+        ok: false,
+        ip: '',
+        country: '',
+        latencyMs: 0,
+        error: 'Could not parse this line.',
+      });
+      continue;
+    }
+    const config = normalizeProxy(parsed);
+    try {
+      const result = await testProxy(config, config.password);
+      rows.push({
+        line: line.slice(0, 120),
+        host: config.host,
+        port: config.port,
+        ok: result.ok,
+        ip: result.ip,
+        country: result.country,
+        latencyMs: result.latencyMs,
+        error: result.error,
+      });
+    } catch (error) {
+      rows.push({
+        line: line.slice(0, 120),
+        host: config.host,
+        port: config.port,
+        ok: false,
+        ip: '',
+        country: '',
+        latencyMs: 0,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return rows;
 }
 
 /** Check one saved proxy and write the answer back onto the row. */

@@ -1,5 +1,10 @@
 # Verified gap analysis — original Joe Browser (C#) vs. this port
 
+> **Status: closed.** Every row below marked *missing* or *partial* has been implemented on
+> `arena/29b5b90a-joe-browser-pro-windows`. The three surfaces that are not reproduced are listed
+> with their reasons in section G. This document is kept as the record of what was compared and
+> how, because the useful part is the method — 81 files read, not a feature page skimmed.
+
 Method: every one of the 81 `.cs` files in `alistairfoxlondon-pixel/Joe-Browser-`
 (`src/*.cs`, 40 987 lines) was read and its public surface enumerated with `grep` against a
 line-by-line inventory. Each row below names the original file and what the port does now.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { NetworkReport, ProfileSummary, ProxyConfig, ProxyEntry } from '../../shared/types';
+import type { NetworkReport, ProfileSummary, ProxyBatchRow, ProxyConfig, ProxyEntry } from '../../shared/types';
 import { PROXY_TYPES } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
@@ -48,6 +48,7 @@ export function ProxiesPage({
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<ProxyEntry | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
+  const [batchTesting, setBatchTesting] = useState(false);
   const [testing, setTesting] = useState<Set<string>>(new Set());
   const [testingAll, setTestingAll] = useState(false);
   const [network, setNetwork] = useState<NetworkReport | null>(null);
@@ -176,6 +177,9 @@ export function ProxiesPage({
           </Button>
           <Button variant="soft" icon="wifi" onClick={() => void diagnostics(null)}>
             {t('net.title')}
+          </Button>
+          <Button variant="soft" icon="bolt" onClick={() => setBatchTesting(true)}>
+            {t('tools.proxy')}
           </Button>
           <Button variant="soft" icon="upload" onClick={() => setImporting(true)}>
             {t('proxy.import')}
@@ -366,8 +370,133 @@ export function ProxiesPage({
         />
       ) : null}
 
+      {batchTesting ? <BatchTestModal onClose={() => setBatchTesting(false)} /> : null}
+
       {confirm.dialog}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ batch test */
+
+/**
+ * Check a pasted list before any of it is saved.
+ *
+ * The original had this as its own Tools tile and it is the difference between buying a proxy
+ * list and using one: a hundred lines go in, the dead ones come out, and nothing enters the
+ * library until the working ones do. Rows are shown as they were pasted so a failure can be
+ * pointed at rather than guessed at.
+ */
+function BatchTestModal({ onClose }: { onClose: () => void }): ReactNode {
+  const { t } = useI18n();
+  const [text, setText] = useState('');
+  const [rows, setRows] = useState<ProxyBatchRow[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const run = async () => {
+    setBusy(true);
+    setError('');
+    setRows(null);
+    try {
+      setRows(await bridge().testProxyLines(text));
+    } catch (problem) {
+      setError(messageOf(problem));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const parsed = text.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean).length;
+  const working = (rows ?? []).filter((row) => row.ok).length;
+
+  return (
+    <Modal
+      title={t('tools.proxy')}
+      subtitle={t('tools.proxy.hint')}
+      onClose={onClose}
+      width="wide"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            {t('btn.close')}
+          </Button>
+          <Button
+            variant="primary"
+            icon="bolt"
+            busy={busy}
+            disabled={parsed === 0}
+            onClick={() => void run()}
+          >
+            {t('proxy.testline').replace('{n}', String(parsed))}
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <Field label={t('proxy.lines')} hint={t('proxy.lines.hint')}>
+          <textarea
+            className="input mono"
+            rows={6}
+            spellCheck={false}
+            value={text}
+            placeholder={'http://user:pass@host:port\nsocks5://host:port'}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </Field>
+
+        {error ? (
+          <Banner tone="err" icon="warning">
+            {error}
+          </Banner>
+        ) : null}
+
+        {busy ? (
+          <div className="cluster faint" style={{ fontSize: 12.5 }}>
+            <span className="spinner" /> {t('proxy.testing').replace('{n}', String(parsed))}
+          </div>
+        ) : null}
+
+        {rows ? (
+          rows.length === 0 ? (
+            <div className="hint">{t('proxy.empty')}</div>
+          ) : (
+            <>
+              <div className="cluster" style={{ gap: 6 }}>
+                <Chip tone={working > 0 ? 'ok' : 'err'}>
+                  {t('proxy.working').replace('{ok}', String(working))}
+                </Chip>
+                <Chip tone={working === rows.length ? 'muted' : 'err'}>
+                  {t('proxy.failing').replace('{n}', String(rows.length - working))}
+                </Chip>
+                <span className="faint" style={{ fontSize: 12 }}>
+                  {t('proxy.paste.hint')}
+                </span>
+              </div>
+              <div className="rows">
+                {rows.map((row, index) => (
+                  <div className="row" key={`${row.line}-${index}`}>
+                    <div className="row-icon" style={{ color: row.ok ? 'var(--ok)' : 'var(--err)' }}>
+                      <Icon name={row.ok ? 'check' : 'close'} />
+                    </div>
+                    <div className="row-main">
+                      <div className="row-title mono" style={{ fontSize: 12.5 }}>
+                        {row.host ? `${row.host}:${row.port}` : row.line}
+                      </div>
+                      <div className="row-sub">
+                        {row.ok
+                          ? `${row.ip}${row.country ? ` · ${row.country}` : ''} · ${row.latencyMs} ms`
+                          : row.error || t('proxy.unreachable')}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )
+        ) : null}
+      </div>
+    </Modal>
   );
 }
 

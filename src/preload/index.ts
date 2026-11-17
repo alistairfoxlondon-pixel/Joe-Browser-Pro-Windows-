@@ -69,6 +69,7 @@ const bridge = {
   importProxyList: (text: string) => invoke('proxy:import', text),
   testProxyEntry: (id: string) => invoke('proxy:test', id),
   testAllProxies: () => invoke('proxy:testAll'),
+  testProxyLines: (text: string) => invoke('proxy:testLines', text),
   createProfileFromProxy: (id: string) => invoke('proxy:createProfile', id),
   proxyLine: (line: string) => invoke('proxy:parseLine', line),
   networkReport: (proxyId?: string) => invoke('proxy:network', proxyId),

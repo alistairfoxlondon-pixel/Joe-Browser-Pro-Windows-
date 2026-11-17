@@ -3,6 +3,7 @@ import type {
   AppInfo,
   AppSettings,
   AuditReport,
+  ProxyBatchRow,
   Bridge,
   CookieSummary,
   DetectedBrowser,
@@ -902,6 +903,20 @@ export const mockBridge: Bridge = {
     entry.lastLatencyMs = 40 + Math.round(Math.random() * 140);
     entry.lastChecked = new Date().toISOString();
     return { ...entry };
+  },
+
+  async testProxyLines(text: string): Promise<ProxyBatchRow[]> {
+    const lines = text.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
+    return lines.map((line, index) => ({
+      line,
+      host: line.replace(/^\w+:\/\//, '').split(':')[0] ?? '',
+      port: Number(line.split(':').pop()) || 0,
+      ok: index % 3 !== 2,
+      ip: index % 3 === 2 ? '' : `10.0.${index}.9`,
+      country: index % 3 === 2 ? '' : 'Bulgaria',
+      latencyMs: index % 3 === 2 ? 0 : 88 + index * 7,
+      error: index % 3 === 2 ? 'The proxy did not answer on that address.' : '',
+    }));
   },
 
   async testAllProxies(): Promise<ProxyEntry[]> {

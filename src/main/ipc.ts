@@ -24,6 +24,7 @@ import type {
   ProfileSummary,
   ProxyCheckResult,
   ProxyConfig,
+  ProxyBatchRow,
   ProxyEntry,
   ReportPayload,
   SessionInfo,
@@ -84,6 +85,7 @@ import {
   saveEntry,
   testAll,
   testEntry,
+  testLines as testProxyLines,
 } from './core/proxies';
 import { Paths } from './core/paths';
 import { SessionManager } from './core/launcher';
@@ -515,6 +517,9 @@ export function registerIpc(context: IpcContext): void {
 
   handle<ProxyEntry>('proxy:test', (id: string) => testEntry(id));
   handle<ProxyEntry[]>('proxy:testAll', () => testAll());
+  // A pasted list checked without saving it. The original had this as its own Tools tile,
+  // because buying a proxy list means finding out which lines answer before storing any.
+  handle<ProxyBatchRow[]>('proxy:testLines', (text: string) => testProxyLines(String(text ?? '')));
 
   handle<Profile>('proxy:createProfile', (id: string) => {
     const entry = listEntries().find((row) => row.id === id);

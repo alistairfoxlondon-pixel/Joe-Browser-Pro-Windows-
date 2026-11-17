@@ -220,6 +220,18 @@ export interface SessionInfo {
   proxyFellBack: boolean;
 }
 
+export interface ProxyBatchRow {
+  /** The line as the user pasted it, so a failure can be pointed at. */
+  line: string;
+  host: string;
+  port: number;
+  ok: boolean;
+  ip: string;
+  country: string;
+  latencyMs: number;
+  error: string;
+}
+
 export interface ProxyCheckResult {
   ok: boolean;
   ip: string;
@@ -588,6 +600,8 @@ export interface Bridge {
   importProxyList(text: string): Promise<{ added: number; failed: string[] }>;
   testProxyEntry(id: string): Promise<ProxyEntry>;
   testAllProxies(): Promise<ProxyEntry[]>;
+  /** Check a pasted list without saving it - the original's "proxy batch test". */
+  testProxyLines(text: string): Promise<ProxyBatchRow[]>;
   /** Point a running session at this saved proxy without closing its tabs. */
   applyProxyToSession(profileId: string, proxyId: string): Promise<boolean>;
   createProfileFromProxy(proxyId: string): Promise<Profile>;
