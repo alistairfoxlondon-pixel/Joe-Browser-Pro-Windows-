@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import type { AccountSummary, AppInfo, AppSettings, LanguageInfo, StoreStats } from '../../shared/types';
+import type { AccountSummary, AppInfo, AppSettings, KernelBuild, LanguageInfo, StoreStats } from '../../shared/types';
 import { bridge } from '../bridge';
 import { useI18n } from '../i18n';
 import { Icon } from '../components/Icon';
@@ -48,6 +48,7 @@ export function SettingsPage({
 
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
   const [stats, setStats] = useState<StoreStats | null>(null);
+  const [kernels, setKernels] = useState<KernelBuild[]>([]);
   const [busy, setBusy] = useState('');
   const [logs, setLogs] = useState('');
 
@@ -55,6 +56,7 @@ export function SettingsPage({
     void (async () => {
       setLanguages(await bridge().listLanguages().catch(() => []));
       setStats(await bridge().getStoreStats().catch(() => null));
+      setKernels(await bridge().listKernels().catch(() => []));
     })();
   }, []);
 
@@ -177,6 +179,27 @@ export function SettingsPage({
                   {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
                     <option key={engine} value={engine}>
                       {t(`br.engine.${engine}`, engine)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label={t('set.kernel')} hint={t('set.kernel.hint')}>
+                {/*
+                  The workspace default build. This value existed in the settings model and was
+                  read by nothing, so a profile always took whatever the spread chose. Choosing a
+                  build that has since been removed is harmless: the store ignores an id that is
+                  not installed rather than launching a missing binary.
+                */}
+                <select
+                  className="select"
+                  value={settings.defaultKernelId}
+                  onChange={(event) => void save({ defaultKernelId: event.target.value })}
+                >
+                  <option value="">{t('set.kernel.spread')}</option>
+                  {kernels.filter((kernel) => kernel.installed).map((kernel) => (
+                    <option key={kernel.id} value={kernel.id}>
+                      {kernel.engine} {kernel.version}
                     </option>
                   ))}
                 </select>

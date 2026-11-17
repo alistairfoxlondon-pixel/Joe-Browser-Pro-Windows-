@@ -381,7 +381,6 @@ export interface AppSettings {
   startPage: string;
   extensionsEnabled: boolean;
   customExtensionsEnabled: boolean;
-  cacheDir: string;
   clearCacheOnExit: boolean;
   /** Master switch for the per-profile history recorder. */
   historyEnabled: boolean;

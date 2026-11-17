@@ -307,3 +307,28 @@ test('files the build depends on are not left in an ignored directory', () => {
     }
   }
 });
+
+test('no setting is declared and then never read', () => {
+  /*
+   * A field on AppSettings that nothing reads is worse than a missing feature: it exists in the
+   * settings file, it is defaulted, and the interface may even offer a control for it, but
+   * changing it does nothing. `pinEnabled` and `defaultKernelId` were both live examples -
+   * the first meant a PIN never locked the app, the second meant a chosen build was ignored.
+   *
+   * This reads every source file and counts real references, excluding the three places a field
+   * legitimately appears while doing nothing: the interface, the defaults, and the mock.
+   */
+  const interfaceBlock = /export interface AppSettings \{([\s\S]*?)\n\}/.exec(types)![1]!;
+  const fields = [...interfaceBlock.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9]*)\??:/gm)].map((m) => m[1]!);
+
+  const sources = fs
+    .readdirSync(path.join(root, 'src'), { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .filter((name) => !name.endsWith('types.ts'))
+    .filter((name) => !name.endsWith('bridge.ts')); // the preview mock mirrors the shape
+
+  const body = sources.map((name) => read(path.join('src', name))).join('\n');
+
+  const dead = fields.filter((field) => !new RegExp(`\\b${field}\\b`).test(body));
+  assert.deepEqual(dead, [], `settings nothing reads: ${dead.join(', ')}`);
+});
