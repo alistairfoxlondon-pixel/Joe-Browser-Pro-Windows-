@@ -9,7 +9,7 @@ import type {
   SortMode,
   ToolConfig,
 } from '../../shared/types';
-import { THE_FINGERPRINT_TEST_URL } from '../../shared/types';
+import { DEFAULT_START_PAGE } from '../../shared/types';
 import { Paths } from './paths';
 import { readJson, writeJson, writeJsonDelayed, flushPending } from './atomic';
 import { normalizeProxy, proxyDetail, proxyEnabled, proxyLabel } from './proxy';
@@ -43,7 +43,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'en',
   defaultEngine: 'auto',
   defaultKernelId: '',
-  startPage: THE_FINGERPRINT_TEST_URL,
+  startPage: DEFAULT_START_PAGE,
   extensionsEnabled: true,
   customExtensionsEnabled: true,
   clearCacheOnExit: false,

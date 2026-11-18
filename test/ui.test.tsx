@@ -915,6 +915,20 @@ test('profiles show the detected country flag and the selected browser mark', as
   } finally { mockBridge.getProfileLocation = original; await teardown(); }
 });
 
+test('a German proxy profile shows the German flag, not the British one', async () => {
+  signIn(); reset();
+  const settings = await mockBridge.getSettings();
+  const profiles = await mockBridge.listProfiles();
+  const berlin = profiles.find((profile) => profile.name === 'Client - Berlin')!;
+  await render(hosted(React.createElement(ProfilesPage, { profiles: [berlin], runningById: new Map(), settings, saveSettings: async () => settings, refresh: async () => undefined, toast: { toast: () => undefined } as never })));
+  const card = container.querySelector('[data-profile-card]')!;
+  assert.ok(card.querySelector('.fi-de.fis'), 'Germany must render the German flag');
+  assert.ok(!card.querySelector('.fi-gb'), 'Germany must never render the British flag');
+  assert.ok(card.textContent?.includes('Germany'));
+  assert.deepEqual(problems, []);
+  await teardown();
+});
+
 test('settings navigation keeps essential controls and never displays language percentages', async () => {
   signIn(); reset();
   const settings = await mockBridge.getSettings();

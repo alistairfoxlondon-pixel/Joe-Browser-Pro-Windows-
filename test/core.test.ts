@@ -911,6 +911,20 @@ test('country names follow the bundled flag code across countries and reject unk
   assert.equal(countryCode('zz'), '');
 });
 
+test('country names resolve to the same code used by their circular flag', async () => {
+  const { countryCodeFromName, countryName } = await import('../src/shared/countries');
+  assert.equal(countryCodeFromName('Germany'), 'DE');
+  assert.equal(countryCodeFromName('United Kingdom'), 'GB');
+  assert.equal(countryCodeFromName('United States'), 'US');
+  assert.equal(countryCodeFromName('USA'), 'US');
+  assert.equal(countryCodeFromName('UK'), 'GB');
+  assert.equal(countryCodeFromName('Russian Federation'), 'RU');
+  assert.equal(countryCodeFromName('de'), 'DE');
+  assert.equal(countryCodeFromName(''), '');
+  assert.equal(countryCodeFromName('Atlantis'), '');
+  assert.equal(countryName(countryCodeFromName('Germany')), 'Germany');
+});
+
 test('history retains previous sessions and marks redirects without duplicating them', () => {
   const profile = store.createProfile({ name: 'History persistence' });
   const dir = path.join(scratch, 'history');
@@ -964,7 +978,7 @@ test('CDP event listeners are active before auto-attach can pause a target', asy
 test('new profiles honor the configured start page and preserve explicit URLs', () => {
   const before = store.getSettings().startPage;
   try {
-    assert.equal(store.DEFAULT_SETTINGS.startPage, 'https://browsercan.net');
+    assert.equal(store.DEFAULT_SETTINGS.startPage, 'https://browsercan.net?utm_source=chatgpt.com');
     store.saveSettings({ startPage: 'https://start.example/' });
     assert.equal(store.draftProfile({ name: 'Default start' }).startUrl, 'https://start.example/');
     assert.equal(store.draftProfile({ name: 'Custom start', startUrl: 'https://custom.example/' }).startUrl, 'https://custom.example/');

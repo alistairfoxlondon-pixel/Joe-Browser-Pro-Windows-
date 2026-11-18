@@ -1,6 +1,8 @@
 import { languagesWithCoverage } from '../shared/i18n';
 import { parseProxyLine } from '../shared/parseProxy';
 import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
+import { countryCodeFromName, countryName } from '../shared/countries';
+import { DEFAULT_START_PAGE } from '../shared/types';
 import type {
   AccountSummary,
   AppInfo,
@@ -172,7 +174,7 @@ const mockProfiles: Profile[] = SAMPLE.map((sample, index) => ({
   tags: sample.tags,
   notes: index === 0 ? 'Warm account, 3 weeks old.' : '',
   status: index === 4 ? 'warm' : 'idle',
-  startUrl: 'https://browsercan.net',
+  startUrl: DEFAULT_START_PAGE,
   createdAt: new Date(Date.now() - (index + 1) * 86_400_000 * 3).toISOString(),
   updatedAt: new Date().toISOString(),
   lastOpenedAt: index < 3 ? new Date(Date.now() - index * 3_600_000).toISOString() : '',
@@ -188,7 +190,7 @@ const mockProfiles: Profile[] = SAMPLE.map((sample, index) => ({
     host: sample.proxy?.host ?? '',
     port: sample.proxy?.port ?? 0,
     lastCountry: sample.proxy?.country ?? '',
-    lastCountryCode: sample.proxy ? 'GB' : '',
+    lastCountryCode: countryCodeFromName(sample.proxy?.country ?? ''),
     lastTimezone: sample.tz,
   },
   tools: {
@@ -283,7 +285,7 @@ const mockSettings: AppSettings = {
   language: 'en',
   defaultEngine: 'chrome',
   defaultKernelId: '',
-  startPage: 'https://browsercan.net',
+  startPage: DEFAULT_START_PAGE,
   extensionsEnabled: true,
   customExtensionsEnabled: true,
   clearCacheOnExit: false,
@@ -373,9 +375,9 @@ function check(): ProxyCheckResult {
   return {
     ok: true,
     ip: '194.35.12.8',
-    country: 'United Kingdom',
-    countryCode: 'GB',
-    city: 'London',
+    country: '',
+    countryCode: '',
+    city: '',
     timezone: 'Europe/London',
     latencyMs: 68,
     error: '',
@@ -386,18 +388,18 @@ function network(): NetworkReport {
   return {
     ok: true,
     ip: '194.35.12.8',
-    country: 'United Kingdom',
-    countryCode: 'GB',
-    city: 'London',
-    region: 'England',
+    country: '',
+    countryCode: '',
+    city: '',
+    region: '',
     timezone: 'Europe/London',
     isp: 'Contabo GmbH',
     resolverIp: '194.35.12.9',
-    resolverGeo: 'United Kingdom',
+    resolverGeo: '',
     latencyMs: 68,
     clockSkewSeconds: 0.4,
     sources: ['ipwho.is', 'ipapi.co'],
-    warnings: ['The DNS resolver answers from the same country as the exit address.'],
+    warnings: [],
     error: '',
   };
 }
@@ -587,7 +589,11 @@ export const mockBridge: Bridge = {
     if (!profile) throw new Error('Profile not found');
     const summary = summarise(profile, false);
     const direct = profile.proxy.type === 'none';
-    return { key: summary.locationKey, ok: direct || !!profile.proxy.lastCountryCode, country: direct ? 'United Kingdom' : profile.proxy.lastCountry, countryCode: direct ? 'GB' : profile.proxy.lastCountryCode };
+    // A direct connection has no proxy exit to attribute. Never claim a country we did not detect,
+    // or a profile would show a flag that has nothing to do with its location.
+    return direct
+      ? { key: summary.locationKey, ok: false, country: '', countryCode: '' }
+      : { key: summary.locationKey, ok: !!profile.proxy.lastCountryCode, country: profile.proxy.lastCountry, countryCode: profile.proxy.lastCountryCode };
   },
 
   async getProfile(id: string): Promise<Profile | null> {
@@ -800,12 +806,19 @@ export const mockBridge: Bridge = {
   async checkProxy(config: ProxyConfig): Promise<ProxyCheckResult> {
     await delay(240);
     if (!config.host) throw new Error('Enter a host and a port.');
-    return { ...check(), ip: config.host, latencyMs: 60 + Math.round(Math.random() * 80) };
+    const code = config.lastCountryCode || countryCodeFromName(config.lastCountry);
+    return {
+      ...check(),
+      ip: config.host,
+      country: code ? countryName(code, config.lastCountry) : '',
+      countryCode: code,
+      latencyMs: 60 + Math.round(Math.random() * 80),
+    };
   },
 
   async checkDirect(): Promise<ProxyCheckResult> {
     await delay(200);
-    return { ...check(), ip: '82.14.33.9', country: 'United Kingdom', countryCode: 'GB', city: 'Leeds' };
+    return { ...check(), ip: '82.14.33.9', country: '', countryCode: '', city: '' };
   },
 
   async listProxies(): Promise<ProxyEntry[]> {
