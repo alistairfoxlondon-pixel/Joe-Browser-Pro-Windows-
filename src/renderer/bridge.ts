@@ -822,7 +822,8 @@ export const mockBridge: Bridge = {
 
   async downloadKernel(id: string): Promise<InstalledKernel> {
     await delay(400);
-    return { id, engine: 'chrome', version: id.split('-')[1] ?? '', path: `/kernels/${id}`, exePath: '', installedAt: new Date().toISOString() };
+    const engine = id.split('-')[0] || 'chrome';
+    return { id, engine, version: id.split('-')[1] ?? '', path: `/kernels/${id}`, exePath: '', installedAt: new Date().toISOString() };
   },
 
   async removeKernel(): Promise<void> {
