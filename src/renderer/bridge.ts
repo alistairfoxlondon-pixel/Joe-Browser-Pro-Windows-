@@ -2,7 +2,9 @@ import { languagesWithCoverage } from '../shared/i18n';
 import { parseProxyLine } from '../shared/parseProxy';
 import { INCLUDED_EXTENSIONS, RECOMMENDED_EXTENSIONS } from '../shared/extensionCatalog';
 import { countryCodeFromName, countryName } from '../shared/countries';
+import { GPUS_BY_TARGET, SCREENS_BY_TARGET, gpuPoolKey } from '../shared/devices';
 import { DEFAULT_START_PAGE } from '../shared/types';
+import type { DeviceTarget, FingerprintConfig } from '../shared/types';
 import type {
   AccountSummary,
   AppInfo,
@@ -473,6 +475,43 @@ function mockCodeOk(code: string): boolean {
 
 /* ------------------------------------------------------------------ the mock */
 
+/** A fresh, internally coherent identity for the browser preview's roll buttons. */
+function mockRollFingerprint(previous: FingerprintConfig, os?: string): FingerprintConfig {
+  const seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
+  const requested = os && os !== 'System default' ? os : previous.os;
+  const target = (requested === 'System default' ? 'Windows 11' : requested) as DeviceTarget;
+  let state = seed;
+  const next = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const screens = SCREENS_BY_TARGET[target] ?? SCREENS_BY_TARGET['Windows 11']!;
+  const screen = screens[Math.floor(next() * screens.length)]!;
+  const pool = GPUS_BY_TARGET[gpuPoolKey(target)];
+  const gpu = pool[Math.floor(next() * pool.length)]!;
+  const cores = [2, 4, 6, 8, 12, 16][Math.floor(next() * 6)]!;
+  const memory = [4, 8, 8, 8, 16][Math.floor(next() * 5)]!;
+  return {
+    ...previous,
+    seed,
+    os: target,
+    screenW: screen.w,
+    screenH: screen.h,
+    availW: screen.w,
+    availH: screen.h - (screen.dpr > 1 ? 78 : 40),
+    pixelRatio: screen.dpr,
+    cores,
+    memory,
+    webGlVendor: gpu.vendor,
+    webGlRenderer: gpu.renderer,
+    userAgent: '',
+    userAgentOverride: '',
+  };
+}
+
 export const mockBridge: Bridge = {
   async getAppInfo(): Promise<AppInfo> {
     return {
@@ -616,7 +655,12 @@ export const mockBridge: Bridge = {
 
   async draftProfile(input: Partial<Profile>): Promise<Profile> {
     const base = mockProfiles[0]!;
-    return { ...base, ...input, id: `draft-${Date.now()}`, name: input.name ?? 'New profile' } as Profile;
+    // The desktop rolls a fresh identity on draft. The preview has to do the same or the
+    // New fingerprint / Random identity buttons look alive while changing nothing.
+    const fingerprint = input.fingerprint
+      ? mockRollFingerprint(input.fingerprint, input.fingerprint.os)
+      : base.fingerprint;
+    return { ...base, ...input, fingerprint, id: `draft-${Date.now()}`, name: input.name ?? 'New profile' } as Profile;
   },
 
   async createProfile(input: Partial<Profile>): Promise<Profile> {

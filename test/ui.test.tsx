@@ -1009,6 +1009,18 @@ test('restoring settings does not flash dark over the early light theme', async 
   } finally { mockBridge.getSettings = originalGet; await teardown(); }
 });
 
+test('the preview rolls a fresh, device-appropriate fingerprint on draft', async () => {
+  const profiles = await mockBridge.listProfiles();
+  const profile = (await mockBridge.getProfile(profiles[0]!.id))!;
+  const rolled = await mockBridge.draftProfile({
+    ...profile,
+    fingerprint: { ...profile.fingerprint, os: 'iPhone' },
+  });
+  assert.notEqual(rolled.fingerprint.seed, profile.fingerprint.seed);
+  assert.equal(rolled.fingerprint.os, 'iPhone');
+  assert.notEqual(rolled.fingerprint.webGlRenderer, profile.fingerprint.webGlRenderer);
+});
+
 test('profile editor removes group and tags and applies fresh device fingerprints', async () => {
   signIn(); reset();
   const settings = await mockBridge.getSettings();
