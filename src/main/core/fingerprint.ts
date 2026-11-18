@@ -4,7 +4,7 @@ import type {
   ResolvedOs,
 } from '../../shared/types';
 import { Rng, hashString } from './rng';
-import { acceptLanguageFor, buildIdentity } from './ua';
+import { acceptLanguageFor, brandNameFor, buildIdentity } from './ua';
 import { BY_CODE, ZONES } from '../../shared/zones';
 import {
   GPUS_BY_TARGET,
@@ -198,7 +198,7 @@ function buildFromSeed(seed: number, options: GenerateOptions): FingerprintConfi
     hardwareNoise: true,
     userAgent: '',
     platform: resolved.platform,
-    brand: 'Google Chrome',
+    brand: isIosTarget(target) ? 'Safari' : engine === 'firefox' ? 'Mozilla Firefox' : brandNameFor(engine),
     userAgentOverride: '',
     browserVersion,
   };

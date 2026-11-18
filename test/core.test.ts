@@ -128,10 +128,21 @@ test('the injected script parses as JavaScript and carries the overrides', () =>
   assert.match(script, /37445/); // UNMASKED_VENDOR_WEBGL
   assert.match(script, /getTimezoneOffset/);
   assert.match(script, /cdc_/);
+  // Audio offsets must be indexed from a seeded table, not from an advancing random stream:
+  // two reads of the same analyser have to agree, just as two canvas reads do.
+  assert.match(script, /audioNoiseTable/);
+  assert.doesNotMatch(script, /\(rnd\(\) - 0\.5\)/);
 
   // The originals live in a closure: the host's real graphics card must not be reachable by
   // walking own properties on window, which an earlier design leaked through a named key.
   assert.doesNotMatch(script, /__jbReal/);
+});
+
+test('the stored brand agrees with the engine and the device target', () => {
+  assert.equal(generateFingerprint({ seed: 5, engine: 'brave', os: 'Windows 11' }).brand, 'Brave');
+  assert.equal(generateFingerprint({ seed: 5, engine: 'edge', os: 'Windows 11' }).brand, 'Microsoft Edge');
+  assert.equal(generateFingerprint({ seed: 5, engine: 'firefox', os: 'Windows 11' }).brand, 'Mozilla Firefox');
+  assert.equal(generateFingerprint({ seed: 5, os: 'iPad' }).brand, 'Safari');
 });
 
 test('proxy lines are accepted in the shapes sellers actually paste', () => {
