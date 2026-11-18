@@ -82,6 +82,10 @@ test('the user agent, platform and brands agree with the claimed OS', () => {
   assert.match(firefox.userAgent, /Firefox\/141\.0/);
   // Firefox exposes no client hints; an empty list is the honest answer.
   assert.equal(firefox.brands.length, 0);
+
+  const joe = buildIdentity('joe', '157.0.8103.41', onWindows, 5);
+  assert.ok(joe.brands.some((b) => b.brand === 'Joe Browser'));
+  assert.ok(joe.fullVersionList.some((b) => b.brand === 'Joe Browser'));
 });
 
 test('a phone target produces a phone, not a desktop with a mobile string', () => {
@@ -473,6 +477,18 @@ test('builds are spread across the profiles that already use them', () => {
   const result = diversity.assignKernel(available, existing as never);
   // The unused build wins, so a fresh profile does not pile onto the popular one.
   assert.equal(result.kernelId, 'chrome-140.0.7339.80');
+});
+
+test('equal-usage builds rotate instead of always choosing the newest', () => {
+  const available = [
+    kernel('chrome-141.0.7390.54', 'chrome', '141.0.7390.54'),
+    kernel('chrome-140.0.7339.80', 'chrome', '140.0.7339.80'),
+    kernel('joe-139.0.7258.66', 'joe', '139.0.7258.66'),
+  ];
+  const first = diversity.assignKernel(available, []).kernelId;
+  const second = diversity.assignKernel(available, [{ kernelId: first }] as never).kernelId;
+  const third = diversity.assignKernel(available, [{ kernelId: first }, { kernelId: second }] as never).kernelId;
+  assert.equal(new Set([first, second, third]).size, 3);
 });
 
 test('a duplicate never lands on the build its source is using', () => {

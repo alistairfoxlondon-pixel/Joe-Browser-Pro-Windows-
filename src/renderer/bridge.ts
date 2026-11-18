@@ -801,7 +801,7 @@ export const mockBridge: Bridge = {
 
   async listKernels(): Promise<KernelBuild[]> {
     const list: KernelBuild[] = [];
-    const engines = ['chrome', 'edge', 'brave'];
+    const engines = ['joe', 'chrome', 'chromium', 'edge', 'brave', 'firefox'];
     for (const engine of engines) {
       for (const [index, version] of ['130.0.6723.91', '129.0.6668.100', '128.0.6613.137'].entries()) {
         list.push({
@@ -811,8 +811,8 @@ export const mockBridge: Bridge = {
           version,
           os: process_os(),
           downloadUrl: `https://example.invalid/${engine}/${version}`,
-          installed: engine === 'chrome' && index === 0,
-          path: engine === 'chrome' && index === 0 ? '/kernels/chrome-130' : '',
+          installed: (engine === 'chrome' || engine === 'joe') && index === 0,
+          path: (engine === 'chrome' || engine === 'joe') && index === 0 ? `/kernels/${engine}-130` : '',
           sizeBytes: 348_000_000,
         });
       }

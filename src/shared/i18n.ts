@@ -436,6 +436,7 @@ const EN: Table = {
   'br.gpu.done': 'Read the adapter from this PC',
   'br.gpu.hint': 'Opens a throwaway browser, asks WebGL who it is, and closes it.',
   'br.engine.auto': 'Whatever this PC has',
+  'br.engine.joe': 'Joe Browser',
   'br.engine.chrome': 'Chrome',
   'br.engine.edge': 'Edge',
   'br.engine.brave': 'Brave',

@@ -93,7 +93,7 @@ export function SettingsPage({ settings, info, saveSettings, refreshProfiles, on
               <div className="form-grid">
                 <Field label={t('set.browser')}><select className="select" value={settings.defaultEngine} onChange={event => void save({ defaultEngine: event.target.value })}>
                   <option value="auto">{t('ed.engine.system')}</option>
-                  {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map(engine => <option key={engine} value={engine}>{t(`br.engine.${engine}`, engine)}</option>)}
+                  {['joe', 'chrome', 'chromium', 'edge', 'brave', 'firefox'].map(engine => <option key={engine} value={engine}>{t(`br.engine.${engine}`, engine)}</option>)}
                 </select></Field>
                 <Field label={t('set.kernel')}><select className="select" value={settings.defaultKernelId} onChange={event => void save({ defaultKernelId: event.target.value })}>
                   <option value="">{t('set.kernel.spread')}</option>

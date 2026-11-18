@@ -190,7 +190,7 @@ export function BrowsersPage({
                   </div>
                   <div className="row-main">
                     <div className="row-title">
-                      {kernel.engine} {kernel.version}
+                      {t(`br.engine.${kernel.engine}`, kernel.engine)} {kernel.version}
                       <Chip tone="ok">{t('br.installed')}</Chip>
                       {kernel.channel && kernel.channel !== 'stable' ? <Chip tone="warn">{kernel.channel}</Chip> : null}
                     </div>
@@ -220,7 +220,7 @@ export function BrowsersPage({
                       </div>
                       <div className="row-main">
                         <div className="row-title">
-                          {kernel.engine} {kernel.version}
+                          {t(`br.engine.${kernel.engine}`, kernel.engine)} {kernel.version}
                           <Chip tone="muted">{kernel.channel}</Chip>
                         </div>
                         <div className="row-sub">
@@ -293,7 +293,7 @@ export function BrowsersPage({
                 onChange={(event) => void saveSettings({ defaultEngine: event.target.value })}
               >
                 <option value="auto">{t('ed.engine.system')}</option>
-                {['chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
+                {['joe', 'chrome', 'chromium', 'edge', 'brave', 'firefox'].map((engine) => (
                   <option key={engine} value={engine}>
                     {t(`br.engine.${engine}`, engine)}
                   </option>
