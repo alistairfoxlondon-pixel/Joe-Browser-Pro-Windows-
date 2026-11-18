@@ -76,7 +76,7 @@ const { AboutPage } = await import('../src/renderer/pages/AboutPage');
 const { LeakModal } = await import('../src/renderer/pages/LeakModal');
 const { BatchCreateModal } = await import('../src/renderer/pages/BatchCreateModal');
 const { mockBridge } = await import('../src/renderer/bridge');
-const { I18nProvider } = await import('../src/renderer/i18n');
+const { I18nProvider, useI18n } = await import('../src/renderer/i18n');
 const { ToastProvider } = await import('../src/renderer/components/UI');
 const { ENGLISH_TABLE, allKeys, coverageOf } = await import('../src/shared/i18n');
 const { encodeQr, qrPath } = await import('../src/shared/qr');
@@ -247,6 +247,21 @@ test.after(() => {
 });
 
 /* ------------------------------------------------------------------ the shell */
+
+/** A component that asks the translation layer for keys that are blank in some languages. */
+function LanguageProbe(): React.ReactElement {
+  const { t } = useI18n();
+  return React.createElement('span', null, `${t('history.open')}|${t('history.open.hint')}`);
+}
+
+test('a blank translation falls back to English instead of a dotted key', async () => {
+  reset();
+  await render(React.createElement(I18nProvider, { language: 'de' }, React.createElement(LanguageProbe)));
+
+  const body = text();
+  assert.match(body, /Open in the profile/, 'the English label did not fill the blank translation');
+  assert.ok(!body.includes('history.open'), 'a raw translation key reached the window');
+});
 
 test('the window mounts and paints the profile list', async () => {
   signIn();

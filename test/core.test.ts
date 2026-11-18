@@ -135,7 +135,12 @@ test('the injected script parses as JavaScript and carries the overrides', () =>
   // Audio offsets must be indexed from a seeded table, not from an advancing random stream:
   // two reads of the same analyser have to agree, just as two canvas reads do.
   assert.match(script, /audioNoiseTable/);
-  assert.doesNotMatch(script, /\(rnd\(\) - 0\.5\)/);
+  // Scoped to the audio patch: performance.now legitimately uses the random stream for jitter,
+  // while the audio reader must not consume it at all.
+  const audioStart = script.indexOf('var audioNoiseTable');
+  const audioEnd = script.indexOf('/* ----', audioStart);
+  assert.ok(audioStart > 0 && audioEnd > audioStart, 'the audio patch is missing its markers');
+  assert.doesNotMatch(script.slice(audioStart, audioEnd), /rnd\(\)/);
 
   // The originals live in a closure: the host's real graphics card must not be reachable by
   // walking own properties on window, which an earlier design leaked through a named key.

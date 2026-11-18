@@ -56,7 +56,7 @@ function joeStartPage(startUrl: string): string {
 main{width:min(720px,90vw);padding:48px 0}.brand{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:8px}.brand strong{font-size:26px;letter-spacing:-.02em}
 p{color:var(--muted);text-align:center;margin:0 0 28px;font-size:14px}
 form{display:flex;gap:8px;margin-bottom:24px}input{flex:1;min-width:0;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;outline:none}
-input:focus{border-color:var(--accent)}button{padding:12px 18px;border-radius:10px;border:0;background:var(--accent);color:#fff;font:600 14px inherit;cursor:pointer}
+input:focus{border-color:var(--accent)}button{padding:12px 18px;border-radius:10px;border:0;background:var(--accent);color:#fff;font:600 14px 'IBM Plex Sans',Segoe UI,system-ui,sans-serif;cursor:pointer}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 a{display:block;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);text-decoration:none;transition:border-color .15s}
 a:hover{border-color:var(--accent)}a b{display:block;font-size:14px}a span{display:block;color:var(--muted);font-size:12px;margin-top:4px}

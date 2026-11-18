@@ -196,6 +196,7 @@ const EN: Table = {
   'history.all': 'Every page',
   'history.empty': 'Nothing recorded yet',
   'history.none': 'Pick a profile first',
+  'history.deletedProfile': 'Deleted profile',
   'audit.title': 'Workspace audit',
   'audit.clean': 'No overlapping identities',
   'audit.clean.body': 'Every profile in this workspace is a distinct machine, proxy and build.',

@@ -83,6 +83,7 @@ import * as history from './core/history';
 import { testDirect, testProxy, parseProxyLine } from './core/proxy';
 import {
   deleteEntry,
+  findEntry,
   importLines,
   listEntries,
   networkReport,
@@ -560,7 +561,10 @@ export function registerIpc(context: IpcContext): void {
     let entry = found;
     if (!entry.lastCountryCode) {
       try {
-        entry = await testEntry(id);
+        await testEntry(id);
+        // Re-read the stored row: the renderer-safe copy has no ciphertext, and the profile
+        // still needs the credential that was saved with the proxy.
+        entry = findEntry(id) ?? entry;
       } catch {
         // An unreachable proxy still produces a profile; it simply has no country to display.
       }

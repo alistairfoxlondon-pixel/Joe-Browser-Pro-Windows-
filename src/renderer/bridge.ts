@@ -515,7 +515,7 @@ function mockRollFingerprint(previous: FingerprintConfig, os?: string): Fingerpr
 export const mockBridge: Bridge = {
   async getAppInfo(): Promise<AppInfo> {
     return {
-      version: '2.2.0',
+      version: '2.3.0',
       electron: '33.2.0',
       chrome: '130.0.6723.91',
       platform: 'win32 x64',
@@ -562,7 +562,7 @@ export const mockBridge: Bridge = {
 
   async readLogTail(): Promise<string> {
     return [
-      '2026-11-17 09:14:02 info  Joe Browser 2.2.0 starting in roaming mode',
+      '2026-11-17 09:14:02 info  Joe Browser 2.3.0 starting in roaming mode',
       '2026-11-17 09:14:02 info  data folder: C:\\Users\\joe\\AppData\\Roaming\\JoeBrowser',
       '2026-11-17 09:14:03 info  loaded 6 profiles',
       '2026-11-17 09:14:05 info  launched "Shop UK" on chrome 130.0.6723.91 (pid 18444)',
@@ -573,7 +573,7 @@ export const mockBridge: Bridge = {
 
   async reportPayload(note: string): Promise<ReportPayload> {
     return {
-      summary: 'Joe Browser 2.2.0 · win32 x64',
+      summary: 'Joe Browser 2.3.0 · win32 x64',
       details: `profiles: 6\nrunning: 1\n${note}`,
       logTail: await mockBridge.readLogTail(),
       telegram: 'https://t.me/joegoldberg2025',
@@ -801,7 +801,7 @@ export const mockBridge: Bridge = {
 
   async listKernels(): Promise<KernelBuild[]> {
     const list: KernelBuild[] = [];
-    const engines = ['joe', 'chrome', 'chromium', 'edge', 'brave', 'firefox'];
+    const engines = ['joe', 'chrome', 'chromium', 'brave', 'firefox'];
     for (const engine of engines) {
       for (const [index, version] of ['130.0.6723.91', '129.0.6668.100', '128.0.6613.137'].entries()) {
         list.push({

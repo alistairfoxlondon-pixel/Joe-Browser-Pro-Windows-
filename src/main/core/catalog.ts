@@ -309,7 +309,9 @@ export async function listKernels(forceRefresh = false): Promise<KernelBuild[]> 
   // Discard legacy entries with a fabricated archive URL, including old cached results.
   let builds = cache.builds.filter((build) =>
     (build.engine !== 'firefox' || (process.platform === 'linux' && build.channel !== 'dev')) &&
-    (cache.schemaVersion === 2 || build.engine !== 'brave'),
+    // Brave's real archive metadata arrived in schema 2. A version check, not equality: bumping
+    // the schema again must not filter Brave out of a cache that already holds valid builds.
+    ((cache.schemaVersion ?? 0) >= 2 || build.engine !== 'brave'),
   );
   const installed = installedIndex();
 
